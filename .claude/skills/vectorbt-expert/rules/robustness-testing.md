@@ -59,7 +59,8 @@ def monte_carlo_trades(pf, n_simulations=1000, seed=42):
 Add random noise to price data and re-run the strategy. If results collapse, the strategy was fit to specific price noise:
 
 ```python
-from openalgo import ta
+import talib
+from market_lib import exrem
 
 def noise_test(close, high, low, run_strategy_fn, n_tests=100, noise_pct=0.001, seed=42):
     """Re-run strategy with slightly perturbed price data."""
@@ -89,12 +90,12 @@ def noise_test(close, high, low, run_strategy_fn, n_tests=100, noise_pct=0.001, 
 # Example: Define strategy function that returns metrics dict
 def run_ema_strategy(close_series, high_series, low_series):
     close_s = pd.Series(close_series, index=close.index) if not isinstance(close_series, pd.Series) else close_series
-    ema_f = ta.ema(close_s, 10)
-    ema_s = ta.ema(close_s, 20)
+    ema_f = talib.EMA(close_s, timeperiod=10)
+    ema_s = talib.EMA(close_s, timeperiod=20)
     buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
     sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-    entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-    exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+    entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+    exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
     pf = vbt.Portfolio.from_signals(
         close_s, entries, exits,
         size=0.75, size_type="percent",
@@ -116,7 +117,8 @@ def run_ema_strategy(close_series, high_series, low_series):
 Test parameters near the optimal values. Robust strategies have broad profitable regions:
 
 ```python
-from openalgo import ta
+import talib
+from market_lib import exrem
 
 def parameter_sensitivity(close, best_fast, best_slow, delta=3):
     """Test parameters in a neighborhood around optimal values."""
@@ -125,12 +127,12 @@ def parameter_sensitivity(close, best_fast, best_slow, delta=3):
         for slow in range(best_slow - delta, best_slow + delta + 1):
             if fast >= slow or fast < 2:
                 continue
-            ema_f = ta.ema(close, fast)
-            ema_s = ta.ema(close, slow)
+            ema_f = talib.EMA(close, timeperiod=fast)
+            ema_s = talib.EMA(close, timeperiod=slow)
             buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
             sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-            entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-            exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+            entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+            exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
             pf = vbt.Portfolio.from_signals(
                 close, entries, exits,
                 size=0.75, size_type="percent",
@@ -206,12 +208,7 @@ def cross_symbol_test(symbols, exchange, strategy_fn):
     """Test strategy across multiple symbols."""
     results = []
     for symbol in symbols:
-        df = client.history(symbol=symbol, exchange=exchange, interval="D",
-                           start_date=start_date, end_date=end_date)
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index()
-        if df.index.tz is not None:
-            df.index = df.index.tz_convert(None)
+        df = load_candles(symbol, exchange, "D", start=start_date, end=end_date)
 
         metrics = strategy_fn(df['close'], df['high'], df['low'])
         metrics['symbol'] = symbol

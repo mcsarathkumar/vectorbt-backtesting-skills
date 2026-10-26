@@ -1,22 +1,26 @@
-import os
+import sys
 from datetime import datetime, timedelta, time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
+import talib
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openalgo import api
+
+# market_lib.py sits next to this script (copied by the setup skill)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from market_lib import load_candles
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
 
 SYMBOL = "NIFTYBEES"
-INDEX_SYMBOL = "NIFTY"
+INDEX_SYMBOL = "NIFTYBEES"
 EXCHANGE = "NSE"
-INDEX_EXCHANGE = "NSE_INDEX"
-INTERVAL = "15m"
+INDEX_EXCHANGE = "NSE"
+INTERVAL = "D"
 INIT_CASH = 10_00_000
 FEES = 0.001              # 0.1%
 RSI_WINDOW = 14           # Weekly RSI period
@@ -40,57 +44,29 @@ def calc_cagr(start_val, end_val, years):
 
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY", "your-api-key-here"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
-start_date_intraday = "2020-01-01"
+start_date_intraday = "2019-06-01"
 start_date_daily = "2019-06-01"  # Extra warmup for 14-week RSI
 
 print("Fetching data...")
 
-# 15m NIFTYBEES data (for trading)
-df_15m = client.history(
-    symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL,
-    start_date=start_date_intraday,
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_15m.columns:
-    df_15m["timestamp"] = pd.to_datetime(df_15m["timestamp"])
-    df_15m = df_15m.set_index("timestamp")
-else:
-    df_15m.index = pd.to_datetime(df_15m.index)
-df_15m = df_15m.sort_index()
-# Normalize timezone: remove tz for consistency
-if df_15m.index.tz is not None:
-    df_15m.index = df_15m.index.tz_localize(None)
-print(f"  NIFTYBEES 15m: {len(df_15m)} bars from {df_15m.index[0]} to {df_15m.index[-1]}")
+# Daily NIFTYBEES data (for trading; the local store has no intraday NIFTYBEES)
+df_trade = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=start_date_intraday, end=str(end_date))
+print(f"  NIFTYBEES Daily: {len(df_trade)} bars from {df_trade.index[0]} to {df_trade.index[-1]}")
 
-# Daily NIFTY index data (for weekly RSI computation)
-df_nifty = client.history(
-    symbol=INDEX_SYMBOL, exchange=INDEX_EXCHANGE, interval="D",
-    start_date=start_date_daily,
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_nifty.columns:
-    df_nifty["timestamp"] = pd.to_datetime(df_nifty["timestamp"])
-    df_nifty = df_nifty.set_index("timestamp")
-else:
-    df_nifty.index = pd.to_datetime(df_nifty.index)
-df_nifty = df_nifty.sort_index()
-print(f"  NIFTY Daily:   {len(df_nifty)} bars from {df_nifty.index[0]} to {df_nifty.index[-1]}")
+# Daily NIFTYBEES data again, for the weekly RSI (Nifty 50 index has no daily bars locally)
+df_nifty = load_candles(INDEX_SYMBOL, INDEX_EXCHANGE, "D", start=start_date_daily, end=str(end_date))
+print(f"  NIFTYBEES Daily: {len(df_nifty)} bars from {df_nifty.index[0]} to {df_nifty.index[-1]}")
 
 # --- Compute Weekly RSI ---
 # Resample daily NIFTY to weekly (Friday close)
 nifty_weekly_close = df_nifty["close"].resample("W-FRI").last().dropna()
 
 # RSI on weekly closes
-rsi_weekly = vbt.RSI.run(nifty_weekly_close, window=RSI_WINDOW).rsi
+rsi_weekly = talib.RSI(nifty_weekly_close, timeperiod=RSI_WINDOW)
 
 # Shift by 1 week: use PREVIOUS week's completed RSI (avoid lookahead)
-# At Friday 3:15 PM, the current week hasn't closed yet,
+# At the Friday close, the current week hasn't closed yet,
 # so we use last week's RSI for the decision
 rsi_weekly_prev = rsi_weekly.shift(1)
 
@@ -104,38 +80,36 @@ for dt, val in recent_rsi.items():
         marker = " [EXIT ZONE]"
     print(f"  {dt.date()}: RSI = {val:.2f}{marker}")
 
-# --- Map Weekly RSI to 15m Bars ---
-# Forward-fill: each 15m bar gets the most recent completed weekly RSI
-rsi_mapped = rsi_weekly_prev.reindex(df_15m.index, method="ffill")
+# --- Map Weekly RSI to Daily Bars ---
+# Forward-fill: each daily bar gets the most recent completed weekly RSI
+rsi_mapped = rsi_weekly_prev.reindex(df_trade.index, method="ffill")
 
-close_15m = df_15m["close"]
+close_trade = df_trade["close"]
 
-# --- Identify Friday 3:15 PM Bars ---
-bar_time = df_15m.index.time
-bar_dow = df_15m.index.dayofweek
+# --- Identify Friday Bars ---
+bar_dow = df_trade.index.dayofweek
 
 is_friday = bar_dow == 4
-is_315pm = pd.Series([t == time(15, 15) for t in bar_time], index=df_15m.index)
-friday_315 = is_friday & is_315pm
+friday_bars = pd.Series(is_friday, index=df_trade.index)
 
-total_fridays = friday_315.sum()
-print(f"\nTotal Friday 3:15 PM bars found: {total_fridays}")
+total_fridays = friday_bars.sum()
+print(f"\nTotal Friday close bars found: {total_fridays}")
 
 # --- Build Entry/Exit Signals with Slab-wise Sizing ---
-rsi_valid = friday_315 & rsi_mapped.notna()
+rsi_valid = friday_bars & rsi_mapped.notna()
 
-# Buy condition: Friday 3:15 PM AND RSI < 68
+# Buy condition: Friday close AND RSI < 68
 buy_mask = rsi_valid & (rsi_mapped < RSI_BUY_THRESHOLD)
 
-# Exit condition: Friday 3:15 PM AND RSI > 70
+# Exit condition: Friday close AND RSI > 70
 exit_mask = rsi_valid & (rsi_mapped > RSI_EXIT_THRESHOLD)
 
 # Size array: default np.inf (for exits = sell all)
-size_arr = pd.Series(np.inf, index=close_15m.index)
+size_arr = pd.Series(np.inf, index=close_trade.index)
 
 # Assign slab-wise buy amounts based on RSI level
 slab_counts = {"RSI 50-68 (5%)": 0, "RSI 30-50 (10%)": 0, "RSI <30 (20%)": 0}
-for dt in close_15m.index[buy_mask]:
+for dt in close_trade.index[buy_mask]:
     rsi_val = rsi_mapped.loc[dt]
     if rsi_val >= 50:
         size_arr.loc[dt] = INIT_CASH * 0.05   # 5% = 50K
@@ -149,7 +123,7 @@ for dt in close_15m.index[buy_mask]:
 
 buy_count = buy_mask.sum()
 exit_count = exit_mask.sum()
-no_action = friday_315.sum() - buy_count - exit_count
+no_action = friday_bars.sum() - buy_count - exit_count
 print(f"Buy signals (RSI < {RSI_BUY_THRESHOLD}):    {buy_count}")
 print(f"Exit signals (RSI > {RSI_EXIT_THRESHOLD}):   {exit_count}")
 print(f"No action (RSI {RSI_BUY_THRESHOLD}-{RSI_EXIT_THRESHOLD}): {no_action}")
@@ -159,7 +133,7 @@ for slab, count in slab_counts.items():
 
 # --- Signal Log ---
 print("\n--- Weekly Signal Log ---")
-for dt in df_15m.index[friday_315]:
+for dt in df_trade.index[friday_bars]:
     rsi_val = rsi_mapped.loc[dt]
     if pd.isna(rsi_val):
         continue
@@ -170,14 +144,14 @@ for dt in df_15m.index[friday_315]:
         action = "EXIT"
     else:
         action = "HOLD"
-    price = close_15m.loc[dt]
+    price = close_trade.loc[dt]
     print(f"  {dt.date()} {dt.time()} | RSI: {rsi_val:.2f} | Price: {price:.2f} | {action}")
 
 # --- Backtest ---
 # accumulate=True: entries add to position, exits with np.inf close full position
 # direction="longonly": prevents short selling on exit when no position exists
 pf = vbt.Portfolio.from_signals(
-    close=close_15m,
+    close=close_trade,
     entries=buy_mask,
     exits=exit_mask,
     size=size_arr,
@@ -186,7 +160,7 @@ pf = vbt.Portfolio.from_signals(
     direction="longonly",
     init_cash=INIT_CASH,
     fees=FEES,
-    freq="15min",
+    freq="1D",
     min_size=1,
     size_granularity=1,
 )
@@ -200,7 +174,7 @@ print("=" * 60)
 print(pf.stats())
 
 equity = pf.value()
-n_days = (close_15m.index[-1] - close_15m.index[0]).days
+n_days = (close_trade.index[-1] - close_trade.index[0]).days
 n_years = n_days / 365.25
 
 cagr_strat = calc_cagr(INIT_CASH, equity.iloc[-1], n_years)
@@ -218,15 +192,15 @@ print(f"Total Orders:    {pf.orders.count()}")
 # --- Benchmarks ---
 # NIFTY 50 index over same period
 nifty_close_aligned = df_nifty["close"].reindex(
-    pd.to_datetime(close_15m.index.date), method="ffill"
+    pd.to_datetime(close_trade.index.date), method="ffill"
 )
-nifty_start = df_nifty["close"].loc[df_nifty.index >= close_15m.index[0].normalize()].iloc[0]
+nifty_start = df_nifty["close"].loc[df_nifty.index >= close_trade.index[0].normalize()].iloc[0]
 nifty_end = df_nifty["close"].iloc[-1]
 cagr_nifty = calc_cagr(nifty_start, nifty_end, n_years)
 
 # NIFTYBEES buy-and-hold
-niftybees_start = close_15m.iloc[0]
-niftybees_end = close_15m.iloc[-1]
+niftybees_start = close_trade.iloc[0]
+niftybees_end = close_trade.iloc[-1]
 cagr_niftybees_bh = calc_cagr(niftybees_start, niftybees_end, n_years)
 total_ret_bh = (niftybees_end / niftybees_start - 1)
 
@@ -277,7 +251,7 @@ fd_equity = pd.Series(
 )
 
 # NIFTYBEES B&H equity (normalized to same starting capital)
-niftybees_daily = close_15m.resample("D").last().dropna()
+niftybees_daily = close_trade.resample("D").last().dropna()
 niftybees_bh_equity = INIT_CASH * (niftybees_daily / niftybees_daily.iloc[0])
 
 fig = make_subplots(
@@ -315,7 +289,7 @@ fig.add_trace(go.Scatter(
 
 # Row 3: Weekly RSI with thresholds
 rsi_plot = rsi_weekly.dropna()
-rsi_plot = rsi_plot[rsi_plot.index >= close_15m.index[0]]
+rsi_plot = rsi_plot[rsi_plot.index >= close_trade.index[0]]
 fig.add_trace(go.Scatter(
     x=rsi_plot.index, y=rsi_plot.values,
     name="Weekly RSI", line=dict(color="#aa88ff", width=1.5),
@@ -330,7 +304,7 @@ fig.update_yaxes(tickformat=".1%", side="right", row=2, col=1)
 fig.update_yaxes(title_text="RSI", side="right", row=3, col=1)
 fig.update_layout(
     template="plotly_dark",
-    title=f"RSI Accumulation: Buy NIFTYBEES Fri 3:15 PM (RSI<{RSI_BUY_THRESHOLD}), Exit (RSI>{RSI_EXIT_THRESHOLD})",
+    title=f"RSI Accumulation: Buy NIFTYBEES Fri close (RSI<{RSI_BUY_THRESHOLD}), Exit (RSI>{RSI_EXIT_THRESHOLD})",
     height=850,
     showlegend=True,
     legend=dict(x=0.01, y=0.99),

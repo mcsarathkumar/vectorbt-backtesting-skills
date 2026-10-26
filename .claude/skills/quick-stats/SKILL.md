@@ -17,11 +17,11 @@ Generate a quick inline backtest and print stats. Do NOT create a file - output 
 
 Generate a single code block the user can paste into a Jupyter cell or run as a script. The code must:
 
-1. Fetch data from OpenAlgo (or DuckDB if user provides a DB path, or yfinance as fallback)
-2. **Use OpenAlgo ta** for EMA 10/20 crossover by default (never VectorBT built-in); only use TA-Lib if the user explicitly says "talib"/"TA-Lib"
-3. Clean signals with `ta.exrem()` (always `.fillna(False)` before exrem)
+1. Load data with `load_candles()` from `market_lib` (local Parquet candle store; most symbols are daily only - if the symbol/interval is missing, say so, then offer yfinance)
+2. **Use TA-Lib** (`talib.EMA`) for the EMA 10/20 crossover
+3. Clean signals with `exrem()` from `market_lib` (always `.fillna(False)` before exrem)
 4. Use **Indian delivery fees**: `fees=0.00111, fixed_fees=20`
-5. Fetch **NIFTY benchmark** via OpenAlgo (`symbol="NIFTY", exchange="NSE_INDEX"`)
+5. Load the **NIFTYBEES benchmark** (Nifty 50 ETF) with `load_candles("NIFTYBEES", "NSE", "D")`
 6. Print a compact results summary:
 
 ```
@@ -38,7 +38,7 @@ Win Rate:        42.5%
 Profit Factor:   1.67
 Total Trades:    28
 -------------------------------------------
-Benchmark (NIFTY): 32.10%
+Benchmark (NIFTYBEES): 32.10%
 Alpha:           +13.13%
 ```
 

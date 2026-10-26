@@ -1,5 +1,5 @@
 """
-Realistic Transaction Cost Analysis Template - VectorBT + OpenAlgo
+Realistic Transaction Cost Analysis Template - VectorBT + TA-Lib
 Compares strategy performance across different cost models:
   1. Zero fees (unrealistic upper bound)
   2. Simplified flat fee
@@ -7,24 +7,30 @@ Compares strategy performance across different cost models:
   4. Indian intraday equity
   5. Indian F&O futures
 Shows the real impact of transaction costs on strategy profitability.
-Indicators: OpenAlgo ta (default indicator library; swap to TA-Lib only if requested).
-Benchmark: NIFTY 50 Index via OpenAlgo (NSE_INDEX).
+Indicators: TA-Lib EMA.
+Benchmark: NIFTYBEES (Nifty 50 ETF) from the local candle store.
 """
 
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
+import talib
 import plotly.graph_objects as go
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api, ta
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles, exrem
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOL = "SBIN"
 EXCHANGE = "NSE"
@@ -33,8 +39,8 @@ FAST_EMA = 10
 SLOW_EMA = 20
 INIT_CASH = 1_000_000
 ALLOCATION = 0.75
-BENCHMARK_SYMBOL = "NIFTY"
-BENCHMARK_EXCHANGE = "NSE_INDEX"
+BENCHMARK_SYMBOL = "NIFTYBEES"
+BENCHMARK_EXCHANGE = "NSE"
 
 # --- Indian Market Fee Models ---
 FEE_MODELS = {
@@ -62,55 +68,25 @@ FEE_MODELS = {
 }
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = end_date - timedelta(days=365 * 3)
 
-df = client.history(
-    symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-df = df.sort_index()
-if df.index.tz is not None:
-    df.index = df.index.tz_convert(None)
+df = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 
 close = df["close"]
 
-# --- Generate Signals (OpenAlgo ta EMA) ---
-ema_fast = ta.ema(close, FAST_EMA)
-ema_slow = ta.ema(close, SLOW_EMA)
+# --- Generate Signals (TA-Lib EMA) ---
+ema_fast = talib.EMA(close, timeperiod=FAST_EMA)
+ema_slow = talib.EMA(close, timeperiod=SLOW_EMA)
 
 buy_raw = (ema_fast > ema_slow) & (ema_fast.shift(1) <= ema_slow.shift(1))
 sell_raw = (ema_fast < ema_slow) & (ema_fast.shift(1) >= ema_slow.shift(1))
 
-entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
 # --- Benchmark ---
-df_bench = client.history(
-    symbol=BENCHMARK_SYMBOL, exchange=BENCHMARK_EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_bench.columns:
-    df_bench["timestamp"] = pd.to_datetime(df_bench["timestamp"])
-    df_bench = df_bench.set_index("timestamp")
-else:
-    df_bench.index = pd.to_datetime(df_bench.index)
-df_bench = df_bench.sort_index()
-if df_bench.index.tz is not None:
-    df_bench.index = df_bench.index.tz_convert(None)
+df_bench = load_candles(BENCHMARK_SYMBOL, BENCHMARK_EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 bench_close = df_bench["close"].reindex(close.index).ffill().bfill()
 
 # --- Run Backtest for Each Fee Model ---

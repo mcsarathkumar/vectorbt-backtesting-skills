@@ -1,169 +1,94 @@
 ---
 name: data-fetching
-description: Fetching historical market data - OpenAlgo (India), yfinance (US/Global), CCXT (Crypto) with python-dotenv configuration
+description: Loading historical market data - local Parquet candle store (India), yfinance (US/Global), CCXT (Crypto)
 metadata:
-  tags: data, openalgo, yfinance, ccxt, history, download, intervals, exchanges, dotenv, env
+  tags: data, candles, parquet, yfinance, ccxt, history, intervals, exchanges, dotenv, env
 ---
 
 # Data Fetching
 
 ## Environment Setup (All Markets)
 
-Every backtest script must load API keys from the single root `.env` using `python-dotenv` + `find_dotenv()`. Never hardcode API keys.
+API keys (CCXT, Alpaca, ...) live in the single root `.env`, loaded with `python-dotenv` + `find_dotenv()`. Never hardcode keys. Indian-market backtests need no keys: they read local Parquet files.
 
 ```python
-import os
-from datetime import datetime, timedelta
 from pathlib import Path
-import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
-# Load .env from project root (find_dotenv walks up from script dir)
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
-```
-
-A `.env.sample` is provided at the project root. Copy it and fill in your keys:
-
-```bash
-cp .env.sample .env
+load_dotenv(find_dotenv(), override=False)   # only needed for CCXT / custom providers
 ```
 
 ---
 
-## 1. Indian Markets — OpenAlgo (Primary)
+## 1. Indian Markets - Local Candle Store (Primary)
 
-Requires: `OPENALGO_API_KEY` and `OPENALGO_HOST` in `.env`.
+Data comes from the `indian-market-data` Parquet store - no API, no rate limit:
 
-```python
-from openalgo import api
-
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
-end_date = datetime.now().date()
-start_date = end_date - timedelta(days=365 * 3)
-
-df = client.history(
-    symbol="SBIN",
-    exchange="NSE",
-    interval="D",
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
+```
+/Users/mcsarathkumar/Workspace/indian-market-data/data/candles   (override with env CANDLES_DIR)
+  <EXCHANGE>/<SYMBOL>/<interval>/...parquet
 ```
 
-### Data Source: Broker API vs DuckDB
-
-The `history()` method supports a `source` parameter to choose between broker API and local DuckDB/Historify database:
+Use `load_candles()` from `market_lib.py` (template: `rules/assets/market_lib.py`, copied to `backtesting/market_lib.py` by `/setup`):
 
 ```python
-# Default: fetch from broker API (rate-limited ~3 req/s)
-df = client.history(
-    symbol="SBIN", exchange="NSE", interval="D",
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-    source="api",
-)
+import sys
+from pathlib import Path
+for _p in Path(__file__).resolve().parents:       # find backtesting/market_lib.py
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p)); break
+from market_lib import load_candles
 
-# Fetch from OpenAlgo DuckDB/Historify database (no rate limit)
-df = client.history(
-    symbol="SBIN", exchange="NSE", interval="D",
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-    source="db",
-)
-
-# Custom intervals only available with source="db"
-df = client.history(
-    symbol="SBIN", exchange="NSE", interval="3m",
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-    source="db",
-)
+df = load_candles("SBIN", "NSE", "D", start="2023-01-01", end="2026-10-19")
+close = df["close"]          # tz-naive IST index; columns: open high low close volume
 ```
 
-| Source | Description | Rate Limit | Intervals |
-|--------|-------------|-----------|-----------|
-| `"api"` | Broker API (default) | ~3 req/s | `1m`, `3m`, `5m`, `10m`, `15m`, `30m`, `1h`, `D` |
-| `"db"` | DuckDB/Historify local DB | None | All standard + any custom interval (see below) |
+`load_candles(symbol, exchange="NSE", interval="D", start=None, end=None)`:
+- `SBIN` resolves to the folder `SBIN-EQ` automatically; `NIFTY` resolves to the `Nifty 50` index folder.
+- Returns a sorted, de-duplicated, tz-naive DataFrame (IST wall-clock; candle **start** time).
+- If the requested intraday interval is not stored for that symbol, it is resampled from `1minute` candles (anchored to the 09:15 open).
 
-Use `source="db"` for:
-- Backtesting and bulk data analysis (no rate limiting)
-- Multi-symbol scans without hitting rate limits
-- Custom interval aggregation (`2m`, `3m`, `4h`, `W`, `M`, `Q`, `Y`)
+### Store Layout
 
-Use `source="api"` (default) for:
-- Real-time or near real-time data
-- When DuckDB database is not configured
+| Interval arg | Folder | File layout |
+|--------------|--------|-------------|
+| `1m` | `1minute` | one file per day: `<yyyy>/<mm>/<dd>.parquet` |
+| `3m`, `5m`, `10m`, `15m`, `30m`, `1h` | `3minute` ... `60minute` | one file per month: `<yyyy>/<mm>.parquet` |
+| `D` | `1day` | one file per year: `<yyyy>.parquet` |
+| `W` | `1week` | one file per year |
 
-### OpenAlgo Intervals (source="api")
+Columns: `timestamp` (tz `Asia/Kolkata`), `open`, `high`, `low`, `close`, `volume`. Prices are rounded to 2 decimals; bad rows are dropped at ingest.
 
-| Interval | Code |
-|----------|------|
-| 1 minute | `1m` |
-| 3 minutes | `3m` |
-| 5 minutes | `5m` |
-| 10 minutes | `10m` |
-| 15 minutes | `15m` |
-| 30 minutes | `30m` |
-| 1 hour | `1h` |
-| Daily | `D` |
+### Check What Exists Before You Backtest
 
-### DuckDB Custom Intervals (source="db")
+Coverage is **not uniform** - most symbols have `1day` only; intraday exists for large caps and a few ETFs. List before assuming:
 
-DuckDB stores only `1m` and `D` data physically. All other intervals are computed on-the-fly via SQL aggregation with exchange-aware candle alignment (e.g., NSE candles align to 9:15 AM market open).
+```bash
+ls /Users/mcsarathkumar/Workspace/indian-market-data/data/candles/NSE/SBIN-EQ        # intervals available
+ls /Users/mcsarathkumar/Workspace/indian-market-data/data/candles/NSE | grep -i "^RELI"  # find the symbol folder
+```
 
-**Intraday** (aggregated from 1m data):
+Known gaps: index folders (`Nifty 50`) have `1minute`/`1second` only (no daily); `NIFTYBEES-EQ` and `GOLDBEES-EQ` have daily only. If `load_candles` raises `FileNotFoundError`, tell the user which interval/symbol is missing instead of falling back to another source silently.
 
-| Category | Examples | Format |
-|----------|----------|--------|
-| Standard minutes | `1m`, `5m`, `15m`, `30m` | `{N}m` |
-| Custom minutes | `2m`, `3m`, `4m`, `6m`, `7m`, `10m`, `12m`, `20m`, `25m`, `45m` | `{N}m` |
-| Standard hours | `1h` | `{N}h` |
-| Custom hours | `2h`, `3h`, `4h`, `6h` | `{N}h` |
+### Exchanges and Symbols
 
-**Daily-based** (aggregated from D data):
+| Exchange | Folder | Symbol format |
+|----------|--------|---------------|
+| NSE equities / ETFs | `candles/NSE/<SYMBOL>-EQ` | `SBIN-EQ`, `NIFTYBEES-EQ` (bare `SBIN` accepted) |
+| NSE indices | `candles/NSE/Nifty 50` | 1-minute only |
+| BSE equities | `candles/BSE/<SCRIPCODE-or-ticker>` | 1day only, e.g. `KMEW` |
+| NSE F&O | `data/fno_candles/NFO/<UNDERLYING>/<CONTRACT>/1minute/<yyyy>/...` | e.g. `BANKNIFTY22APR31700CE`; extra `open_interest` column |
 
-| Category | Examples | Format |
-|----------|----------|--------|
-| Daily | `D` | `D` |
-| Weekly | `W`, `2W`, `3W` | `{N}W` |
-| Monthly | `M`, `2M`, `3M`, `6M` | `{N}M` |
-| Quarterly | `Q`, `2Q` | `{N}Q` |
-| Yearly | `Y`, `2Y` | `{N}Y` |
-
-**Not supported with source="db"**: seconds intervals (`1s`, `5s`), custom days (`2D`, `3D`)
-
-### OpenAlgo Exchange Codes
-
-| Exchange | Code | Description |
-|----------|------|-------------|
-| NSE | `NSE` | National Stock Exchange equities |
-| BSE | `BSE` | Bombay Stock Exchange equities |
-| NFO | `NFO` | NSE Futures and Options |
-| BFO | `BFO` | BSE Futures and Options |
-| CDS | `CDS` | NSE Currency Derivatives |
-| BCD | `BCD` | BSE Currency Derivatives |
-| MCX | `MCX` | Multi Commodity Exchange |
-| NSE_INDEX | `NSE_INDEX` | NSE Indices |
-| BSE_INDEX | `BSE_INDEX` | BSE Indices |
-
-### OpenAlgo Symbol Format
-
-- **Equity**: `SBIN`, `RELIANCE`, `INFY`, `HDFCBANK`
-- **Futures**: `BANKNIFTY24APR24FUT` (BaseSymbol + ExpiryDate + FUT)
-- **Options**: `NIFTY28MAR2420800CE` (BaseSymbol + ExpiryDate + StrikePrice + CE/PE)
-- **Index**: `NIFTY`, `BANKNIFTY`, `FINNIFTY` (with exchange=NSE_INDEX)
+F&O sits in a separate root (`.../indian-market-data/data/fno_candles`); read those files with `pd.read_parquet` over the contract folder (see [futures-backtesting](./futures-backtesting.md)).
 
 ### Indian Market Benchmarks
 
 | Benchmark | Source | Symbol |
 |-----------|--------|--------|
-| NIFTY 50 (primary) | OpenAlgo | `symbol="NIFTY", exchange="NSE_INDEX"` |
-| NIFTY 50 (fallback) | yfinance | `^NSEI` |
+| Nifty 50 (daily, primary) | local store | `NIFTYBEES` (ETF proxy; index has no daily bars) |
+| Nifty 50 (intraday) | local store | `NIFTY` (index, 1-minute, resample as needed) |
+| Nifty 50 (fallback) | yfinance | `^NSEI` |
 
 ---
 
@@ -299,64 +224,31 @@ exchange = ccxt.binance({
 
 ---
 
-## Data Normalization (All Markets)
+## Data Normalization (yfinance / CCXT / custom)
 
-Always normalize the datetime index after fetching from any source:
+`load_candles()` already returns a clean frame. For other sources, normalize:
 
 ```python
-# OpenAlgo returns "timestamp" column or datetime index
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-
 df = df.sort_index()
-
-# Remove timezone info (VectorBT works best with tz-naive)
 if df.index.tz is not None:
-    df.index = df.index.tz_convert(None)
-```
-
-For yfinance, column names are capitalized (`Close`, `Open`, `High`, `Low`, `Volume`). Normalize if needed:
-
-```python
-# Lowercase column names to match OpenAlgo convention
-df.columns = df.columns.str.lower()
+    df.index = df.index.tz_convert(None)   # VectorBT works best with tz-naive
+df.columns = df.columns.str.lower()        # yfinance: Close -> close
 close = df["close"]
 ```
 
-## Multiple Timeframe Data Fetch
+## Multiple Timeframe Data Load
 
 ```python
-# Daily data (OpenAlgo)
-df_daily = client.history(symbol="RELIANCE", exchange="NSE", interval="D",
-                          start_date="2024-01-01", end_date="2025-02-25")
-
-# 5-minute intraday data (OpenAlgo)
-df_5m = client.history(symbol="RELIANCE", exchange="NSE", interval="5m",
-                       start_date="2025-02-01", end_date="2025-02-25")
-
-# Custom intervals via DuckDB (source="db")
-df_weekly = client.history(symbol="RELIANCE", exchange="NSE", interval="W",
-                           start_date="2024-01-01", end_date="2025-02-25",
-                           source="db")
-df_3m = client.history(symbol="RELIANCE", exchange="NSE", interval="3m",
-                       start_date="2025-02-01", end_date="2025-02-25",
-                       source="db")
+df_daily = load_candles("RELIANCE", "NSE", "D", start="2024-01-01")
+df_5m = load_candles("RELIANCE", "NSE", "5m", start="2025-02-01")   # resampled from 1minute if not stored
+df_4h = resample_ohlcv(load_candles("RELIANCE", "NSE", "1h"), "4h")  # from market_lib
 ```
 
-## Multi-Asset Data Fetch (OpenAlgo)
+## Multi-Asset Data Load
 
 ```python
 symbols = ["RELIANCE", "HDFCBANK", "INFY", "TCS"]
-dfs = {}
-for sym in symbols:
-    # Use source="db" for bulk fetching (no rate limit)
-    dfs[sym] = client.history(symbol=sym, exchange="NSE", interval="D",
-                              start_date="2024-01-01", end_date="2025-02-25",
-                              source="db")
-
+dfs = {sym: load_candles(sym, "NSE", "D", start="2024-01-01") for sym in symbols}
 close_prices = pd.DataFrame({sym: dfs[sym]["close"] for sym in symbols})
 ```
 
@@ -364,60 +256,9 @@ close_prices = pd.DataFrame({sym: dfs[sym]["close"] for sym in symbols})
 
 | If the user says... | Market | Data Source | Fee Model |
 |---------------------|--------|-------------|-----------|
-| NSE, BSE, NIFTY, BANKNIFTY, Indian stock names | India | OpenAlgo | [indian-market-costs](./indian-market-costs.md) |
+| NSE, BSE, NIFTY, BANKNIFTY, Indian stock names | India | Local candle store | [indian-market-costs](./indian-market-costs.md) |
 | AAPL, SPY, S&P 500, NASDAQ, US stock names | US | yfinance | [us-market-costs](./us-market-costs.md) |
 | BTC, ETH, crypto, USDT | Crypto | yfinance or CCXT | [crypto-market-costs](./crypto-market-costs.md) |
-| DuckDB path provided | India | DuckDB direct | [indian-market-costs](./indian-market-costs.md) |
-
-## 3b. DuckDB Direct Loading (Fastest — No API)
-
-For backtesting with local DuckDB databases. No API key or network needed. Supports two formats:
-
-### Custom DuckDB
-
-```python
-import duckdb
-import pandas as pd
-
-DB_PATH = r"path/to/market_data.duckdb"
-con = duckdb.connect(DB_PATH, read_only=True)
-df = con.execute("""
-    SELECT date, time, open, high, low, close, volume
-    FROM ohlcv WHERE symbol = 'SBIN' ORDER BY date, time
-""").fetchdf()
-con.close()
-
-df["datetime"] = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
-df = df.set_index("datetime").sort_index()
-df = df.drop(columns=["date", "time"])
-close = df["close"]
-```
-
-### OpenAlgo Historify DuckDB
-
-```python
-import duckdb
-import pandas as pd
-
-HISTORIFY_DB = r"path/to/openalgo/db/historify.duckdb"
-con = duckdb.connect(HISTORIFY_DB, read_only=True)
-df = con.execute("""
-    SELECT timestamp, open, high, low, close, volume
-    FROM market_data
-    WHERE symbol = 'SBIN' AND exchange = 'NSE' AND interval = '1m'
-    ORDER BY timestamp
-""").fetchdf()
-con.close()
-
-df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
-df = df.set_index("datetime").sort_index()
-df = df.drop(columns=["timestamp"])
-close = df["close"]
-```
-
-See [duckdb-data](./duckdb-data.md) for full reference including auto-detection, resampling, and multi-symbol loading.
-
----
 
 ## 4. Custom Data Provider (Extensible)
 
@@ -546,8 +387,9 @@ close = ts["close"]
 ## NEVER Do This
 
 - Never hardcode API keys in scripts — always use `.env` + `python-dotenv`
+- Never fetch Indian market data from a broker/API when the local candle store has it
 - Never hardcode dates without making them configurable
 - Never skip `sort_index()` — data must be chronologically ordered
 - Never ignore timezone handling — mismatch causes silent alignment errors
 - Never fetch more intraday data than the source provides (see interval tables above)
-- Never use yfinance for Indian market backtests when OpenAlgo is available (OpenAlgo has more accurate data)
+- Never use yfinance for Indian market backtests when the local candle store has the symbol

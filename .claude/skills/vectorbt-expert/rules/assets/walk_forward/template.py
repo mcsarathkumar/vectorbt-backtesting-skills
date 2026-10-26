@@ -1,26 +1,31 @@
 """
-Walk-Forward Analysis Template - VectorBT + OpenAlgo
+Walk-Forward Analysis Template - VectorBT + TA-Lib
 Optimizes EMA parameters on in-sample, validates on out-of-sample, rolls forward.
-Indicators: OpenAlgo ta (default indicator library; swap to TA-Lib only if requested).
+Indicators: TA-Lib EMA.
 Fees: Indian delivery equity model (0.111% + Rs 20/order).
 """
 
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
+import talib
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from tqdm import tqdm
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api, ta
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles, exrem
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOL = "SBIN"
 EXCHANGE = "NSE"
@@ -40,30 +45,12 @@ FAST_RANGE = range(5, 25)   # Fast EMA: 5 to 24
 SLOW_RANGE = range(20, 50)  # Slow EMA: 20 to 49
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = end_date - timedelta(days=365 * 5)  # 5 years for walk-forward
 
 print(f"Fetching {SYMBOL} ({EXCHANGE}) {INTERVAL} data from {start_date} to {end_date}")
 
-df = client.history(
-    symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-df = df.sort_index()
-if df.index.tz is not None:
-    df.index = df.index.tz_convert(None)
+df = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 
 close = df["close"]
 print(f"Data loaded: {len(df)} bars from {df.index[0].date()} to {df.index[-1].date()}")
@@ -71,14 +58,14 @@ print(f"Data loaded: {len(df)} bars from {df.index[0].date()} to {df.index[-1].d
 
 def run_ema_backtest(close_slice, fast_period, slow_period):
     """Run a single EMA crossover backtest on a data slice."""
-    ema_f = ta.ema(close_slice, fast_period)
-    ema_s = ta.ema(close_slice, slow_period)
+    ema_f = talib.EMA(close_slice, timeperiod=fast_period)
+    ema_s = talib.EMA(close_slice, timeperiod=slow_period)
 
     buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
     sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
 
-    entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-    exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+    entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+    exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
     pf = vbt.Portfolio.from_signals(
         close_slice, entries, exits,

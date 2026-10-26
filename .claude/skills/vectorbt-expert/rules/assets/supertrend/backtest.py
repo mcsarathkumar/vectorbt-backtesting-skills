@@ -1,25 +1,29 @@
 """
-Supertrend Backtest - VectorBT + OpenAlgo
+Supertrend Backtest - VectorBT + TA-Lib
 Strategy: Buy on uptrend crossover, sell on downtrend crossover.
            Intraday: entries 9:30-15:00, forced exit at 15:15.
-Indicators: openalgo.ta.supertrend.
+Indicators: market_lib.supertrend (ATR from TA-Lib).
 Fees: Indian intraday equity model (0.0225% + Rs 20/order).
-Benchmark: NIFTY 50 Index via OpenAlgo (NSE_INDEX).
+Benchmark: NIFTYBEES (Nifty 50 ETF) from the local candle store.
 """
 
-import os
+import sys
 from datetime import datetime, timedelta, time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api, ta
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles, exrem, supertrend
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOL = "SBIN"
 EXCHANGE = "NSE"
@@ -30,34 +34,16 @@ INIT_CASH = 1_000_000
 FEES = 0.000225             # Indian intraday equity
 FIXED_FEES = 20             # Rs 20 per order
 ALLOCATION = 0.75
-BENCHMARK_SYMBOL = "NIFTY"
-BENCHMARK_EXCHANGE = "NSE_INDEX"
+BENCHMARK_SYMBOL = "NIFTYBEES"
+BENCHMARK_EXCHANGE = "NSE"
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = end_date - timedelta(days=90)  # ~3 months for intraday
 
 print(f"Fetching {SYMBOL} ({EXCHANGE}) {INTERVAL} data from {start_date} to {end_date}")
 
-df = client.history(
-    symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-df = df.sort_index()
-if df.index.tz is not None:
-    df.index = df.index.tz_convert(None)
+df = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 
 close = df["close"]
 high = df["high"]
@@ -65,7 +51,7 @@ low = df["low"]
 print(f"Data loaded: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
 
 # --- Strategy: Supertrend ---
-st_line, st_direction = ta.supertrend(high, low, close, period=ST_PERIOD, multiplier=ST_MULTIPLIER)
+st_line, st_direction = supertrend(high, low, close, period=ST_PERIOD, multiplier=ST_MULTIPLIER)
 
 t = df.index.time
 
@@ -79,8 +65,8 @@ at_1515 = (t == time(15, 15))
 long_entries = (cross_up & entry_window).fillna(False)
 long_exits = (cross_down | at_1515).fillna(False)
 
-entries = ta.exrem(long_entries, long_exits)
-exits = ta.exrem(long_exits, entries)
+entries = exrem(long_entries, long_exits)
+exits = exrem(long_exits, entries)
 
 print(f"Signals - Entries: {entries.sum()}, Exits: {exits.sum()}")
 
@@ -98,21 +84,9 @@ pf = vbt.Portfolio.from_signals(
     freq="5min",
 )
 
-# --- Benchmark: NIFTY 50 Index (daily for comparison) ---
+# --- Benchmark: NIFTYBEES (Nifty 50 ETF) (daily for comparison) ---
 print(f"\nFetching benchmark: {BENCHMARK_SYMBOL} ({BENCHMARK_EXCHANGE})")
-df_bench = client.history(
-    symbol=BENCHMARK_SYMBOL, exchange=BENCHMARK_EXCHANGE, interval="D",
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_bench.columns:
-    df_bench["timestamp"] = pd.to_datetime(df_bench["timestamp"])
-    df_bench = df_bench.set_index("timestamp")
-else:
-    df_bench.index = pd.to_datetime(df_bench.index)
-df_bench = df_bench.sort_index()
-if df_bench.index.tz is not None:
-    df_bench.index = df_bench.index.tz_convert(None)
+df_bench = load_candles(BENCHMARK_SYMBOL, BENCHMARK_EXCHANGE, "D", start=str(start_date), end=str(end_date))
 
 bench_close = df_bench["close"]
 pf_bench = vbt.Portfolio.from_holding(bench_close, init_cash=INIT_CASH, fees=FEES, freq="1D")

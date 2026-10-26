@@ -12,7 +12,7 @@ Create a complete VectorBT backtest script for the user.
 Parse `$ARGUMENTS` as: strategy symbol exchange interval
 
 - `$0` = strategy name (e.g., ema-crossover, rsi, donchian, supertrend, macd, sda2, momentum)
-- `$1` = symbol (e.g., SBIN, RELIANCE, NIFTY). Default: SBIN
+- `$1` = symbol (e.g., SBIN, RELIANCE, NIFTYBEES). Default: SBIN
 - `$2` = exchange (e.g., NSE, NFO). Default: NSE
 - `$3` = interval (e.g., D, 1h, 5m). Default: D
 
@@ -25,16 +25,14 @@ If no arguments, ask the user which strategy they want.
 3. Create a `.py` file in `backtesting/{strategy_name}/` named `{symbol}_{strategy}_backtest.py`
 4. Use the matching template from `rules/assets/{strategy}/backtest.py` as the starting point
 5. The script must:
-   - Load `.env` from the project root using `find_dotenv()` (walks up from script dir automatically)
-   - Fetch data via `client.history()` from OpenAlgo
-   - If user provides a DuckDB path, load data directly via `duckdb.connect(path, read_only=True)` instead of OpenAlgo API. Auto-detect format: Historify (`market_data` table, epoch timestamps) vs custom (`ohlcv` table, date+time). See vectorbt-expert `rules/duckdb-data.md`.
-   - If `openalgo.ta` is not importable (standalone DuckDB), use inline `exrem()` fallback.
-   - **Use OpenAlgo ta for ALL indicators by default** (EMA, SMA, RSI, MACD, BBands, ATR, ADX, STDDEV, MOM, and 90+ more) - `from openalgo import ta`
-   - **Only use TA-Lib if the user explicitly says "talib"/"TA-Lib"** in their request; specialty indicators (Supertrend, Donchian, Ichimoku, HMA, KAMA, ALMA, ZLEMA, VWMA) always come from OpenAlgo ta regardless, since TA-Lib has no equivalent
-   - Use `ta.exrem()` to clean duplicate signals (always `.fillna(False)` before exrem)
+   - Import `load_candles`, `exrem` and any other helpers from `market_lib` (found by walking up from the script folder; if `backtesting/market_lib.py` is missing, copy it from `rules/assets/market_lib.py`)
+   - Load data via `load_candles(symbol, exchange, interval, start, end)` from the local Parquet candle store (`/Users/mcsarathkumar/Workspace/indian-market-data/data/candles`, override with `CANDLES_DIR`). **Check coverage first** (`ls` the symbol folder): most symbols have daily candles only. If the symbol/interval is missing, tell the user instead of switching data source.
+   - **Use TA-Lib for indicators by default** (`import talib`: EMA, SMA, RSI, MACD, BBANDS, ATR, ADX, STDDEV, MOM ...)
+   - Use **pandas-ta** for indicators TA-Lib lacks (Ichimoku, HMA, ALMA, VWMA ...) and **vectorbt indicators** (`vbt.talib(...)`, `vbt.MA`) for parameter sweeps or when the user asks for them. Supertrend and Donchian come from `market_lib`
+   - Use `exrem()` to clean duplicate signals (always `.fillna(False)` before exrem)
    - Run `vbt.Portfolio.from_signals()` with `min_size=1, size_granularity=1`
    - **Indian delivery fees**: `fees=0.00111, fixed_fees=20` for delivery equity
-   - Fetch NIFTY benchmark via OpenAlgo (`symbol="NIFTY", exchange="NSE_INDEX"`)
+   - Load the benchmark with `load_candles("NIFTYBEES", "NSE", "D")` (Nifty 50 ETF; the Nifty 50 index has no daily bars locally)
    - Print full `pf.stats()`
    - **Print Strategy vs Benchmark comparison table** (Total Return, Sharpe, Sortino, Max DD, Win Rate, Trades, Profit Factor)
    - **Explain the backtest report** in plain language for normal traders
@@ -64,7 +62,7 @@ If no arguments, ask the user which strategy they want.
 
 ## Benchmark Rules
 
-- Default: NIFTY 50 via OpenAlgo (`symbol="NIFTY", exchange="NSE_INDEX"`)
+- Default: NIFTYBEES (Nifty 50 ETF) from the local candle store (`load_candles("NIFTYBEES", "NSE", "D")`)
 - If user specifies a different benchmark, use that instead
 - For yfinance: use `^NSEI` for India, `^GSPC` (S&P 500) for US markets
 - Always compare: Total Return, Sharpe, Sortino, Max Drawdown

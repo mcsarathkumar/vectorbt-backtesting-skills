@@ -58,61 +58,15 @@ close = df_resampled["Close"]
 - Apply `.dropna()` after resampling to remove empty bars (weekends, holidays)
 - Verify bar count after resampling matches expected trading sessions
 
-## Load from DuckDB and Resample
+## Load from the Local Candle Store and Resample
 
-For DuckDB-stored 1-minute data (faster than CSV):
-
-```python
-import duckdb
-import pandas as pd
-
-DB_PATH = r"path/to/market_data.duckdb"
-
-con = duckdb.connect(DB_PATH, read_only=True)
-df = con.execute("""
-    SELECT date, time, open, high, low, close, volume
-    FROM ohlcv WHERE symbol = 'RELIANCE' ORDER BY date, time
-""").fetchdf()
-con.close()
-
-# Build datetime index
-df["datetime"] = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
-df = df.set_index("datetime").sort_index()
-df = df.drop(columns=["date", "time"])
-
-# Resample to 5-min
-df_5m = df.resample("5min", origin="start_day", offset="9h15min",
-                     label="right", closed="right").agg({
-    "open": "first", "high": "max", "low": "min",
-    "close": "last", "volume": "sum"
-}).dropna()
-close = df_5m["close"]
-```
-
-### OpenAlgo Historify DuckDB Format
-
-Historify stores timestamps as Unix epoch seconds:
+`load_candles()` (see [data-fetching](./data-fetching.md)) already resamples from 1-minute data when an interval is not stored. For custom bar sizes (2h, 4h, 45min) use `resample_ohlcv()` from `market_lib`:
 
 ```python
-HISTORIFY_DB = r"path/to/openalgo/db/historify.duckdb"
+from market_lib import load_candles, resample_ohlcv
 
-con = duckdb.connect(HISTORIFY_DB, read_only=True)
-df = con.execute("""
-    SELECT timestamp, open, high, low, close, volume
-    FROM market_data
-    WHERE symbol = 'RELIANCE' AND exchange = 'NSE' AND interval = '1m'
-    ORDER BY timestamp
-""").fetchdf()
-con.close()
-
-df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
-df = df.set_index("datetime").sort_index()
-df = df.drop(columns=["timestamp"])
-
-# Resample same as above
-df_5m = df.resample("5min", origin="start_day", offset="9h15min",
-                     label="right", closed="right").agg({
-    "open": "first", "high": "max", "low": "min",
-    "close": "last", "volume": "sum"
-}).dropna()
+df_1m = load_candles("RELIANCE", "NSE", "1m", start="2025-01-01")
+df_45m = resample_ohlcv(df_1m, "45min")       # anchored to the 09:15 open
+close = df_45m["close"]
 ```
+

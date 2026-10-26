@@ -1,12 +1,12 @@
 """
-Buy & Hold Portfolio Backtest - VectorBT + OpenAlgo
+Buy & Hold Portfolio Backtest - VectorBT + TA-Lib
 Strategy: Static allocation across ETFs (e.g., 60% NIFTYBEES + 40% GOLDBEES).
           One-time purchase on Day 1, hold forever.
 Fees: Indian delivery equity model (0.111% + Rs 20/order).
-Benchmark: NIFTY 50 Index via OpenAlgo (NSE_INDEX) + HDFC FD rate.
+Benchmark: NIFTYBEES (Nifty 50 ETF) from the local candle store + HDFC FD rate.
 """
 
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,12 +15,16 @@ import pandas as pd
 import vectorbt as vbt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOLS = ["NIFTYBEES", "GOLDBEES"]
 WEIGHTS = {"NIFTYBEES": 0.60, "GOLDBEES": 0.40}
@@ -30,8 +34,8 @@ INIT_CASH = 10_00_000
 FEES = 0.00111              # Indian delivery equity
 FIXED_FEES = 20             # Rs 20 per order
 FD_CAGR = 0.0645            # HDFC Bank FD rate 6.45%
-BENCHMARK_SYMBOL = "NIFTY"
-BENCHMARK_EXCHANGE = "NSE_INDEX"
+BENCHMARK_SYMBOL = "NIFTYBEES"
+BENCHMARK_EXCHANGE = "NSE"
 
 
 def calc_cagr(start_val, end_val, years):
@@ -42,11 +46,6 @@ def calc_cagr(start_val, end_val, years):
 
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = "2018-01-01"
 
@@ -54,18 +53,7 @@ print(f"Fetching data for {SYMBOLS} ({EXCHANGE}) from {start_date} to {end_date}
 
 dfs = {}
 for sym in SYMBOLS:
-    df = client.history(
-        symbol=sym, exchange=EXCHANGE, interval=INTERVAL,
-        start_date=start_date, end_date=end_date.strftime("%Y-%m-%d"),
-    )
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.set_index("timestamp")
-    else:
-        df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    if df.index.tz is not None:
-        df.index = df.index.tz_convert(None)
+    df = load_candles(sym, EXCHANGE, INTERVAL, start=start_date, end=str(end_date))
     dfs[sym] = df
     print(f"  {sym}: {len(df)} bars from {df.index[0].date()} to {df.index[-1].date()}")
 
@@ -86,18 +74,7 @@ pf = vbt.Portfolio.from_orders(
 
 # --- Benchmark ---
 print("\nFetching NIFTY 50 index data for benchmark...")
-df_nifty = client.history(
-    symbol=BENCHMARK_SYMBOL, exchange=BENCHMARK_EXCHANGE, interval=INTERVAL,
-    start_date=start_date, end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_nifty.columns:
-    df_nifty["timestamp"] = pd.to_datetime(df_nifty["timestamp"])
-    df_nifty = df_nifty.set_index("timestamp")
-else:
-    df_nifty.index = pd.to_datetime(df_nifty.index)
-df_nifty = df_nifty.sort_index()
-if df_nifty.index.tz is not None:
-    df_nifty.index = df_nifty.index.tz_convert(None)
+df_nifty = load_candles(BENCHMARK_SYMBOL, BENCHMARK_EXCHANGE, INTERVAL, start=start_date, end=str(end_date))
 nifty_close = df_nifty["close"].reindex(close_prices.index).ffill().bfill()
 
 pf_niftybees = vbt.Portfolio.from_holding(

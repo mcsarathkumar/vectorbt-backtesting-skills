@@ -1,24 +1,28 @@
 """
-Donchian Channel Breakout Backtest - VectorBT + OpenAlgo
+Donchian Channel Breakout Backtest - VectorBT + TA-Lib
 Strategy: Buy when price breaks above N-period high, sell when breaks below N-period low.
-Indicators: openalgo.ta.donchian (shifted by 1 to avoid lookahead).
+Indicators: rolling Donchian channel from market_lib (shifted by 1 to avoid lookahead).
 Fees: Indian delivery equity model (0.111% + Rs 20/order).
-Benchmark: NIFTY 50 Index via OpenAlgo (NSE_INDEX).
+Benchmark: NIFTYBEES (Nifty 50 ETF) from the local candle store.
 """
 
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api, ta
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles, exrem, crossover, crossunder, donchian
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOL = "SBIN"
 EXCHANGE = "NSE"
@@ -28,34 +32,16 @@ INIT_CASH = 1_000_000
 FEES = 0.00111
 FIXED_FEES = 20
 ALLOCATION = 0.75
-BENCHMARK_SYMBOL = "NIFTY"
-BENCHMARK_EXCHANGE = "NSE_INDEX"
+BENCHMARK_SYMBOL = "NIFTYBEES"
+BENCHMARK_EXCHANGE = "NSE"
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = end_date - timedelta(days=365 * 3)
 
 print(f"Fetching {SYMBOL} ({EXCHANGE}) {INTERVAL} data from {start_date} to {end_date}")
 
-df = client.history(
-    symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-df = df.sort_index()
-if df.index.tz is not None:
-    df.index = df.index.tz_convert(None)
+df = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 
 close = df["close"]
 high = df["high"]
@@ -63,17 +49,17 @@ low = df["low"]
 print(f"Data loaded: {len(df)} bars from {df.index[0].date()} to {df.index[-1].date()}")
 
 # --- Strategy: Donchian Channel Breakout ---
-upper, middle, lower = ta.donchian(high, low, period=DONCHIAN_PERIOD)
+upper, middle, lower = donchian(high, low, period=DONCHIAN_PERIOD)
 
 # Shift by 1 to avoid lookahead bias
 upper_shifted = upper.shift(1)
 lower_shifted = lower.shift(1)
 
-buy_raw = pd.Series(ta.crossover(close, upper_shifted), index=df.index).fillna(False)
-sell_raw = pd.Series(ta.crossunder(close, lower_shifted), index=df.index).fillna(False)
+buy_raw = crossover(close, upper_shifted).fillna(False)
+sell_raw = crossunder(close, lower_shifted).fillna(False)
 
-entries = ta.exrem(buy_raw, sell_raw)
-exits = ta.exrem(sell_raw, buy_raw)
+entries = exrem(buy_raw, sell_raw)
+exits = exrem(sell_raw, buy_raw)
 
 print(f"Signals - Entries: {entries.sum()}, Exits: {exits.sum()}")
 
@@ -91,21 +77,9 @@ pf = vbt.Portfolio.from_signals(
     freq="1D",
 )
 
-# --- Benchmark: NIFTY 50 Index ---
+# --- Benchmark: NIFTYBEES (Nifty 50 ETF) ---
 print(f"\nFetching benchmark: {BENCHMARK_SYMBOL} ({BENCHMARK_EXCHANGE})")
-df_bench = client.history(
-    symbol=BENCHMARK_SYMBOL, exchange=BENCHMARK_EXCHANGE, interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_bench.columns:
-    df_bench["timestamp"] = pd.to_datetime(df_bench["timestamp"])
-    df_bench = df_bench.set_index("timestamp")
-else:
-    df_bench.index = pd.to_datetime(df_bench.index)
-df_bench = df_bench.sort_index()
-if df_bench.index.tz is not None:
-    df_bench.index = df_bench.index.tz_convert(None)
+df_bench = load_candles(BENCHMARK_SYMBOL, BENCHMARK_EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 
 bench_close = df_bench["close"].reindex(close.index).ffill().bfill()
 pf_bench = vbt.Portfolio.from_holding(bench_close, init_cash=INIT_CASH, fees=FEES, freq="1D")

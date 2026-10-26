@@ -1,11 +1,14 @@
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from openalgo import api, ta
+
+# market_lib.py sits next to this script (copied by the setup skill)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from market_lib import load_candles, exrem
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
@@ -20,31 +23,12 @@ FEES = 0.001
 ALLOCATION = 0.75
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY", "your-api-key-here"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = end_date - timedelta(days=365 * 3)
 
 print(f"Fetching {SYMBOL} ({EXCHANGE}) {INTERVAL} data from {start_date} to {end_date}")
 
-df = client.history(
-    symbol=SYMBOL,
-    exchange=EXCHANGE,
-    interval=INTERVAL,
-    start_date=start_date.strftime("%Y-%m-%d"),
-    end_date=end_date.strftime("%Y-%m-%d"),
-)
-
-if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
-else:
-    df.index = pd.to_datetime(df.index)
-
-df = df.sort_index()
+df = load_candles(SYMBOL, EXCHANGE, INTERVAL, start=str(start_date), end=str(end_date))
 close = df["close"]
 
 print(f"Data loaded: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
@@ -57,8 +41,8 @@ buy_raw = ema_fast.ma_crossed_above(ema_slow)
 sell_raw = ema_fast.ma_crossed_below(ema_slow)
 
 # Clean duplicate signals
-entries = ta.exrem(buy_raw, sell_raw)
-exits = ta.exrem(sell_raw, buy_raw)
+entries = exrem(buy_raw, sell_raw)
+exits = exrem(sell_raw, buy_raw)
 
 print(f"Signals - Entries: {entries.sum()}, Exits: {exits.sum()}")
 

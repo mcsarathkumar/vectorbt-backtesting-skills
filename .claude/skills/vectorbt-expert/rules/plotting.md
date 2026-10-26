@@ -197,5 +197,5 @@ fig.show()
 ## NEVER Do This
 
 - Never use Plotly's default datetime x-axis for OHLC/candlestick charts (creates gaps on non-trading days)
-- Never use VectorBT's built-in RSI/MA indicators for plotting - always use OpenAlgo ta (or TA-Lib if the user requested it) computed values
+- Never use VectorBT's built-in RSI/MA indicators for plotting - compute indicators with TA-Lib (or pandas-ta) and plot those values - `vbt.RSI`'s default smoothing differs from Wilder RSI
 - Never forget `xaxis_rangeslider_visible=False` on candlestick charts (wastes space)

@@ -1,4 +1,4 @@
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -7,7 +7,10 @@ import pandas as pd
 import vectorbt as vbt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openalgo import api
+
+# market_lib.py sits next to this script (copied by the setup skill)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from market_lib import load_candles
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
@@ -28,11 +31,6 @@ def calc_cagr(start_val, end_val, years):
     return (end_val / start_val) ** (1 / years) - 1
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY", "your-api-key-here"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = "2018-01-01"
 
@@ -40,19 +38,7 @@ print(f"Fetching data for {SYMBOLS} ({EXCHANGE}) from {start_date} to {end_date}
 
 dfs = {}
 for sym in SYMBOLS:
-    df = client.history(
-        symbol=sym,
-        exchange=EXCHANGE,
-        interval=INTERVAL,
-        start_date=start_date,
-        end_date=end_date.strftime("%Y-%m-%d"),
-    )
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.set_index("timestamp")
-    else:
-        df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
+    df = load_candles(sym, EXCHANGE, INTERVAL, start=start_date, end=str(end_date))
     dfs[sym] = df
     print(f"  {sym}: {len(df)} bars from {df.index[0].date()} to {df.index[-1].date()}")
 
@@ -95,17 +81,8 @@ print(f"Final Value:     {pf.value().iloc[-1]:,.0f}")
 
 # --- Benchmarks ---
 # NIFTY 50 Index
-print("\nFetching NIFTY 50 index data for benchmark...")
-df_nifty = client.history(
-    symbol="NIFTY", exchange="NSE_INDEX", interval=INTERVAL,
-    start_date=start_date, end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_nifty.columns:
-    df_nifty["timestamp"] = pd.to_datetime(df_nifty["timestamp"])
-    df_nifty = df_nifty.set_index("timestamp")
-else:
-    df_nifty.index = pd.to_datetime(df_nifty.index)
-df_nifty = df_nifty.sort_index()
+print("\nLoading NIFTYBEES (Nifty 50 ETF) data for benchmark...")
+df_nifty = load_candles("NIFTYBEES", "NSE", INTERVAL, start=start_date, end=str(end_date))
 nifty_close = df_nifty["close"].reindex(close_prices.index).ffill().bfill()
 
 # Individual B&H benchmarks

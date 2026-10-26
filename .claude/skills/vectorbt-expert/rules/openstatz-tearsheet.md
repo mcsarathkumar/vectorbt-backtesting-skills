@@ -84,7 +84,7 @@ benchmark = ostz.providers.download_returns("^NSEI")
 # US Market - S&P 500
 benchmark = ostz.providers.download_returns("SPY")
 
-# Custom benchmark from OpenAlgo (convert close prices to returns first)
+# Custom benchmark from the local candle store (convert close prices to returns first)
 benchmark = bench_close.pct_change().dropna()
 
 # In every case, align to the strategy index (and name it) before passing:

@@ -11,7 +11,7 @@ metadata:
 
 Test thousands of parameter combinations simultaneously without loops.
 
-**Exception:** Broadcasting requires VectorBT's built-in `vbt.MA.run()` because neither OpenAlgo ta nor TA-Lib can vectorize across parameter arrays. This is the ONLY case where `vbt.MA.run()` is acceptable — for parameter sweeps only, never for production backtests.
+**Exception:** Broadcasting requires VectorBT's built-in `vbt.MA.run()` because plain TA-Lib calls cannot vectorize across parameter arrays (`vbt.talib("EMA")` or `vbt.MA.run()` can). This is the ONLY case where `vbt.MA.run()` is acceptable — for parameter sweeps only, never for production backtests.
 
 ```python
 import numpy as np
@@ -41,14 +41,15 @@ print(f"Best return: {total_returns.max():.2%}")
 
 ## Method 2: Loop-Based Optimization (Recommended)
 
-Uses OpenAlgo ta for indicators (default, compliant with project rules — swap to TA-Lib only if the user explicitly asks for it). More control, collects custom metrics:
+Uses TA-Lib for indicators (default; swap to pandas-ta or vectorbt indicators if the user asks). More control, collects custom metrics:
 
 ```python
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
 from tqdm import tqdm
-from openalgo import ta
+import talib
+from market_lib import exrem
 
 # Parameter grid
 short_spans = np.arange(5, 15, 1)   # 5 to 14
@@ -61,14 +62,14 @@ for short_span in tqdm(short_spans, desc="Optimizing"):
         if short_span >= long_span:
             continue
 
-        ema_f = ta.ema(close, int(short_span))
-        ema_s = ta.ema(close, int(long_span))
+        ema_f = talib.EMA(close, timeperiod=int(short_span))
+        ema_s = talib.EMA(close, timeperiod=int(long_span))
 
         buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
         sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
 
-        entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-        exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+        entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+        exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
         portfolio = vbt.Portfolio.from_signals(
             close, entries, exits,
@@ -132,8 +133,8 @@ fig.show()
 
 | Method | Pros | Cons |
 |--------|------|------|
-| Broadcasting | Extremely fast, tests thousands at once | Limited to VectorBT's built-in indicators (exception to the OpenAlgo ta / TA-Lib rule) |
-| Loop-based | Full OpenAlgo ta (or TA-Lib, if requested) compliance, any indicator, custom metrics | Slower, needs tqdm for progress |
+| Broadcasting | Extremely fast, tests thousands at once | Limited to VectorBT's indicator wrappers (`vbt.MA`, `vbt.talib(...)`) |
+| Loop-based | Any indicator library, custom metrics | Slower, needs tqdm for progress |
 
 **Prefer loop-based** for production optimization. Use broadcasting only for rapid exploration.
 

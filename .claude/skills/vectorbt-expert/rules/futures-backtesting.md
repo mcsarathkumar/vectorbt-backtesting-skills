@@ -24,12 +24,16 @@ pf = vbt.Portfolio.from_signals(
 )
 ```
 
+## Data Location
+
+F&O candles live in `/Users/mcsarathkumar/Workspace/indian-market-data/data/fno_candles/NFO/<UNDERLYING>/<CONTRACT>/1minute/<yyyy>/...` (e.g. `BANKNIFTY22APR31700CE`) with an extra `open_interest` column. Read the contract folder with `pd.read_parquet` (same Parquet schema as equities, `timestamp` tz `Asia/Kolkata`). Check the folder exists first - coverage is partial.
+
 ## Index Futures & Options Lot Sizes (SEBI Revised, Effective 31 Dec 2025)
 
 SEBI mandates contract value between Rs 15-20 lakh. Lot sizes are periodically revised.
 
-| Index | Exchange | Lot Size | OpenAlgo Symbol |
-|-------|----------|----------|-----------------|
+| Index | Exchange | Lot Size | Underlying |
+|-------|----------|----------|------------|
 | Nifty 50 | NFO | 65 | NIFTY |
 | Nifty Bank | NFO | 30 | BANKNIFTY |
 | Nifty Financial Services | NFO | 60 | FINNIFTY |
@@ -48,7 +52,7 @@ SEBI mandates contract value between Rs 15-20 lakh. Lot sizes are periodically r
 | Nifty Financial Services | 40 | 65 | 65 | 60 |
 | Nifty Midcap Select | 75 | 120 | 140 | 120 |
 
-**Stock Futures:** Lot sizes vary per stock (see exchange LOTSIZE.csv or OpenAlgo instruments API).
+**Stock Futures:** Lot sizes vary per stock (see exchange LOTSIZE.csv or the NSE F&O contract master).
 
 ## Futures Fee Structure
 

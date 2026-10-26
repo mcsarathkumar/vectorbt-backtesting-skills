@@ -1,11 +1,11 @@
 ---
 name: setup
-description: Set up the Python backtesting environment. Detects OS, creates virtual environment, installs dependencies (openalgo, ta-lib, vectorbt, plotly), and creates the backtesting folder structure.
+description: Set up the Python backtesting environment. Detects OS, creates virtual environment, installs dependencies (ta-lib, pandas-ta, vectorbt, plotly), links the local candle store, and creates the backtesting folder structure.
 argument-hint: "[python-version]"
 allowed-tools: Bash, Read, Write, Glob, AskUserQuestion
 ---
 
-Set up the complete Python backtesting environment for VectorBT + OpenAlgo.
+Set up the complete Python backtesting environment for VectorBT + TA-Lib, with Indian market data read from the local Parquet candle store.
 
 ## Arguments
 
@@ -51,16 +51,9 @@ If the user specified a Python version argument, use that instead of `python3`:
 $PYTHON_VERSION -m venv venv
 ```
 
-### Step 3: TA-Lib System Dependency (Optional)
+### Step 3: TA-Lib System Dependency (Required)
 
-**OpenAlgo ta (`from openalgo import ta`) is the default indicator library for this project - it ships 100+ indicators and needs no separate system dependency.** TA-Lib is only needed if the user wants to be able to say "use talib" for a specific backtest.
-
-Ask the user with AskUserQuestion:
-- "Do you also want TA-Lib installed for when you explicitly request it in a backtest? (Optional - OpenAlgo ta already covers the same indicators plus 90+ more)"
-  - Yes, install TA-Lib too
-  - No, skip it (recommended - install it later if ever needed)
-
-If the user skips it, skip this entire step and omit `ta-lib` from the Step 4 pip install. If the user wants it, TA-Lib requires a C library installed at the OS level BEFORE `pip install ta-lib`.
+**TA-Lib (`import talib`) is the default indicator library for this project.** pandas-ta and vectorbt indicators are the alternatives (installed via pip in Step 4). TA-Lib needs a C library installed at the OS level BEFORE `pip install ta-lib`:
 
 **macOS:**
 ```bash
@@ -108,65 +101,55 @@ pip install TA_Lib-0.4.32-cp312-cp312-win_amd64.whl
 Install all required packages (latest versions). `openstatz` replaces QuantStats for tearsheets - always install it, never `quantstats`:
 
 ```bash
-pip install openalgo vectorbt plotly anywidget nbformat pandas numpy yfinance python-dotenv tqdm scipy numba nbformat ipywidgets openstatz ccxt duckdb psutil
+pip install ta-lib pandas-ta vectorbt plotly anywidget nbformat pandas numpy pyarrow yfinance python-dotenv tqdm scipy numba nbformat ipywidgets openstatz ccxt psutil
 ```
 
-If the user opted into TA-Lib in Step 3, append `ta-lib` to this install command (after the C library is installed).
+`ta-lib` must be installed after the C library from Step 3. `pyarrow` is required to read the Parquet candles.
 
-### Step 5: Create Backtesting Folder
+### Step 5: Create Backtesting Folder and Copy market_lib
 
 Create only the top-level backtesting directory. Strategy subfolders are created on-demand when a backtest script is generated (by the `/backtest` skill).
 
 ```bash
 mkdir -p backtesting
+# locate the installed vectorbt-expert skill (path depends on the agent / global install)
+SRC=$(ls .claude/skills/vectorbt-expert/rules/assets/market_lib.py .agents/skills/vectorbt-expert/rules/assets/market_lib.py ~/.claude/skills/vectorbt-expert/rules/assets/market_lib.py ~/.agents/skills/vectorbt-expert/rules/assets/market_lib.py 2>/dev/null | head -1)
+cp "$SRC" backtesting/market_lib.py
 ```
 
-Do NOT pre-create strategy subfolders.
+`market_lib.py` holds `load_candles()` (reads the Parquet candle store) and the signal helpers (`exrem`, `crossover`, `crossunder`, `flip`, `donchian`, `supertrend`). Generated scripts find it by walking up from their own folder. Do NOT pre-create strategy subfolders.
 
 ### Step 6: Configure .env File
 
 **6a. Check if `.env.sample` exists at the project root.** If it does, use it as a template.
 
 **6b. Ask the user which markets they will be backtesting** using AskUserQuestion:
-- Indian Markets (OpenAlgo) — requires OpenAlgo API key
-- Indian Markets (DuckDB) — direct database loading, no API needed
+- Indian Markets (local candle store) — no API needed
 - US Markets (yfinance) — no API key needed
 - Crypto Markets (CCXT) — optional API key for private data
 
-**6c. If the user selected Indian Markets**, ask for their OpenAlgo API key:
-- Ask: "Enter your OpenAlgo API key (from the OpenAlgo dashboard):"
-- If the user provides a key, store it in `.env`
-- If the user skips, write a placeholder
+**6c. If the user selected Indian Markets**, confirm the candle store location. Default: `/Users/mcsarathkumar/Workspace/indian-market-data/data/candles`.
+- Check it exists (`ls`) and contains `NSE/`; if not, ask: "Enter the path to your candles folder (<exchange>/<symbol>/<interval>/*.parquet):"
+- Store it as `CANDLES_DIR` in `.env` (omit when the default is used)
+- Mention coverage is uneven: most symbols have daily candles only; intraday exists for large caps
 
-**6d. If the user selected Indian Markets (DuckDB)**, ask for the DuckDB database path:
-- Ask: "Enter the path to your DuckDB database file (e.g., D:/data/market_data.duckdb):"
-- Auto-detect format: If the database has a `market_data` table with `symbol, exchange, interval, timestamp` columns, it is OpenAlgo Historify format (store as `HISTORIFY_DB_PATH`). Otherwise store as `DUCKDB_PATH`.
-- If the user also has OpenAlgo Historify, ask: "Is this an OpenAlgo Historify database? (y/n)"
-
-**6e. If the user selected Crypto Markets**, ask if they want to configure exchange API keys:
+**6d. If the user selected Crypto Markets**, ask if they want to configure exchange API keys:
 - Ask: "Do you have exchange API keys for authenticated data? (Optional — public OHLCV data works without keys)"
 - If yes, ask for API key and secret key, store in `.env`
 - If no, leave them blank in `.env`
 
-**6f. Write the `.env` file** in the project root directory. Use this template, filling in any keys/paths the user provided:
+**6e. Write the `.env` file** in the project root directory. Use this template, filling in any keys/paths the user provided:
 
 ```
-# Indian Markets (OpenAlgo)
-OPENALGO_API_KEY={user_provided_key or "your_openalgo_api_key_here"}
-OPENALGO_HOST=http://127.0.0.1:5000
-
-# DuckDB Data Sources (direct database loading - fastest)
-# Custom DuckDB (user-created with OHLCV table)
-DUCKDB_PATH={user_provided_path or ""}
-# OpenAlgo Historify DuckDB (market_data table with epoch timestamps)
-HISTORIFY_DB_PATH={user_provided_path or ""}
+# Indian Markets - local Parquet candle store
+CANDLES_DIR={user_provided_path or "/Users/mcsarathkumar/Workspace/indian-market-data/data/candles"}
 
 # Crypto Markets (CCXT) - Optional
 CRYPTO_API_KEY={user_provided_key or ""}
 CRYPTO_SECRET_KEY={user_provided_key or ""}
 ```
 
-**6g. Add `.env` to `.gitignore`** if it exists (never commit secrets):
+**6f. Add `.env` to `.gitignore`** if it exists (never commit secrets):
 
 Scripts use `find_dotenv()` to automatically walk up and find the single root `.env`, so no copies are needed in subdirectories.
 
@@ -181,9 +164,10 @@ Run a quick verification:
 ```bash
 python -c "
 import vectorbt as vbt
-from openalgo import ta
+import talib
+import pandas_ta
+import pyarrow
 import plotly
-import duckdb
 import anywidget
 import nbformat
 import openstatz
@@ -191,15 +175,21 @@ from dotenv import load_dotenv
 print('All packages installed successfully')
 print(f'  vectorbt: {vbt.__version__}')
 print(f'  plotly: {plotly.__version__}')
-print(f'  duckdb: {duckdb.__version__}')
+print(f'  talib: {talib.__version__}')
 print(f'  nbformat: {nbformat.__version__}')
 print(f'  openstatz: {openstatz.__version__}')
-print(f'  OpenAlgo ta: available (default indicator library)')
+print(f'  pandas-ta: available')
 print(f'  python-dotenv: available')
 "
 ```
 
-If the user opted into TA-Lib, also verify with `python -c "import talib; print('TA-Lib available')"`. If that import fails, inform the user that the C library needs to be installed first (see Step 3).
+Also verify the candle store is readable:
+
+```bash
+python -c "import sys; sys.path.insert(0, 'backtesting'); from market_lib import load_candles; print(load_candles('SBIN', 'NSE', 'D').tail(2))"
+```
+
+If `import talib` fails, the C library from Step 3 is missing.
 
 ### Step 8: Print Summary
 
@@ -209,7 +199,8 @@ Print a summary showing:
 - Virtual environment path
 - Installed packages and versions
 - Backtesting folder created (strategy subfolders created on-demand by `/backtest`)
-- `.env` file status (configured with keys / placeholder) — single file at project root
+- `.env` file status and candle store path (found / missing)
+- `backtesting/market_lib.py` copied
 - Reminder: "Run `cp .env.sample .env` and fill in API keys if you skipped configuration"
 
 ## Important Notes

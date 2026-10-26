@@ -24,12 +24,9 @@ If no arguments, ask the user which strategy to optimize.
 2. Create `backtesting/{strategy_name}/` directory if it doesn't exist (on-demand)
 3. Create a `.py` file in `backtesting/{strategy_name}/` named `{symbol}_{strategy}_optimize.py`
 4. The script must:
-   - Load `.env` from project root using `find_dotenv()` and fetch data via OpenAlgo `client.history()`
-   - If user provides a DuckDB path, load data directly via `duckdb.connect(path, read_only=True)`. See vectorbt-expert `rules/duckdb-data.md`.
-   - If `openalgo.ta` is not importable (standalone DuckDB), use inline `exrem()` fallback.
-   - **Use OpenAlgo ta for ALL indicators by default** (never VectorBT built-in). Only switch to TA-Lib if the user explicitly says "talib"/"TA-Lib"
-   - **Always use OpenAlgo ta** for specialty indicators (Supertrend, Donchian, etc.) - no TA-Lib equivalent exists
-   - Use `ta.exrem()` to clean signals (always `.fillna(False)` before exrem)
+   - Load data via `load_candles()` from `market_lib` (local Parquet candle store; walk up from the script folder to find `backtesting/market_lib.py`). Check the symbol/interval exists first - most symbols are daily only.
+   - **Use TA-Lib for indicators by default**; pandas-ta for indicators TA-Lib lacks; vectorbt indicators (`vbt.talib(...)`, `vbt.MA`) are fine for broadcast sweeps or when the user asks. Supertrend and Donchian come from `market_lib`
+   - Use `exrem()` from `market_lib` to clean signals (always `.fillna(False)` before exrem)
    - Define sensible parameter ranges for the chosen strategy
    - Use loop-based optimization to collect multiple metrics per combo
    - Track: total_return, sharpe_ratio, max_drawdown, trade_count for each combination
@@ -39,7 +36,7 @@ If no arguments, ask the user which strategy to optimize.
    - Print top 10 results for both criteria
    - Generate Plotly heatmap of total return across parameter grid (`template="plotly_dark"`)
    - Generate Plotly heatmap of Sharpe ratio across parameter grid
-   - **Fetch NIFTY benchmark** and compare best parameters vs benchmark
+   - **Load NIFTYBEES benchmark** (Nifty 50 ETF) and compare best parameters vs benchmark
    - **Print Strategy vs Benchmark comparison table**
    - **Explain results** in plain language for normal traders
    - Save results to CSV

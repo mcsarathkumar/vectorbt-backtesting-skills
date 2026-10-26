@@ -2,7 +2,7 @@
 
 A comprehensive collection of backtesting skills for trading strategies using VectorBT. Works with **40+ AI coding agents** via [skills.sh](https://github.com/vercel-labs/skills) — including Claude Code, Cursor, Codex, OpenCode, Cline, Windsurf, GitHub Copilot, Gemini CLI, Roo Code, and more.
 
-Supports **Indian markets**, **US markets**, and **Crypto markets** with realistic transaction cost modeling, OpenAlgo indicators (100+, TA-Lib available on request), market-specific benchmarking, OpenStatz tearsheets, and robustness testing. Broker-neutral by design — fee models use industry-standard references that can be customized for any broker.
+Supports **Indian markets**, **US markets**, and **Crypto markets** with realistic transaction cost modeling, TA-Lib indicators (pandas-ta / vectorbt indicators when needed), market-specific benchmarking, OpenStatz tearsheets, and robustness testing. Broker-neutral by design — fee models use industry-standard references that can be customized for any broker.
 
 ## Quick Install
 
@@ -10,36 +10,38 @@ Install the skills into your project using [npx skills](https://github.com/verce
 
 ```bash
 # GitHub shorthand
-npx skills add marketcalls/vectorbt-backtesting-skills
+npx skills add mcsarathkumar/vectorbt-backtesting-skills
 
 # Full GitHub URL
-npx skills add https://github.com/marketcalls/vectorbt-backtesting-skills
+npx skills add https://github.com/mcsarathkumar/vectorbt-backtesting-skills
 ```
 
 Install a specific skill only:
 
 ```bash
-npx skills add marketcalls/vectorbt-backtesting-skills -s backtest
-npx skills add marketcalls/vectorbt-backtesting-skills -s optimize
-npx skills add marketcalls/vectorbt-backtesting-skills -s vectorbt-expert
-npx skills add marketcalls/vectorbt-backtesting-skills -s setup
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -s backtest
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -s optimize
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -s vectorbt-expert
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -s setup
 ```
+
+`setup` copies `market_lib.py` from the `vectorbt-expert` skill, so install both together (or install everything, as in the first command). Indian-market data is read from a local candle folder - set `CANDLES_DIR` in `.env` if yours is not at `/Users/mcsarathkumar/Workspace/indian-market-data/data/candles`.
 
 List available skills before installing:
 
 ```bash
-npx skills add marketcalls/vectorbt-backtesting-skills -l
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -l
 ```
 
 Install globally (available across all projects):
 
 ```bash
-npx skills add marketcalls/vectorbt-backtesting-skills -g
+npx skills add mcsarathkumar/vectorbt-backtesting-skills -g
 ```
 
 ### Supported AI Coding Agents
 
-Skills are installed via [skills.sh](https://github.com/vercel-labs/skills) which supports 40+ agents. Each agent reads skills from its own directory:
+Skills are installed via [skills.sh](https://github.com/vercel-labs/skills) which supports 40+ agents. Each agent reads skills from its own directory (project-level; `-g` installs to the same folder under your home directory):
 
 | Agent | Skills Directory |
 |-------|-----------------|
@@ -60,7 +62,7 @@ The `npx skills add` command detects which agents you have installed and places 
 
 | Market | Data Source | Fee Reference | Default Benchmark |
 |--------|------------|---------------|-------------------|
-| **India** | OpenAlgo (NSE, BSE, NFO, MCX) | Delivery, Intraday, F&O (4-segment) | NIFTY 50 |
+| **India** | Local Parquet candles (NSE, BSE, F&O) | Delivery, Intraday, F&O (4-segment) | NIFTYBEES (Nifty 50 ETF) |
 | **US** | yfinance (NYSE, NASDAQ) | Stocks, Options, Futures (per-share + per-contract) | S&P 500 |
 | **Crypto** | yfinance / CCXT | Spot, Perpetual Futures (maker/taker) | Bitcoin |
 | **Custom** | Any provider via extensible pattern | User-defined | User-defined |
@@ -73,9 +75,9 @@ The `npx skills add` command detects which agents you have installed and places 
 
 | Command | What It Does |
 |---------|-------------|
-| `/setup` | Detects OS, creates venv, installs OpenAlgo + all packages (TA-Lib optional), creates `backtesting/` folders, configures `.env` with API keys |
+| `/setup` | Detects OS, creates venv, installs TA-Lib + all packages, creates `backtesting/` with `market_lib.py`, points `.env` at the candle store |
 | `/backtest` | Generates a complete backtest script with signals, market-specific fees, benchmark comparison, plain-language report, OpenStatz tearsheet |
-| `/optimize` | Parameter grid search with OpenAlgo ta indicators, tqdm progress bars, Plotly heatmaps, best params vs benchmark |
+| `/optimize` | Parameter grid search with TA-Lib indicators, tqdm progress bars, Plotly heatmaps, best params vs benchmark |
 | `/quick-stats` | Inline code block (no file) — fetch data, run EMA crossover, print compact stats + benchmark alpha |
 | `/strategy-compare` | Side-by-side comparison of multiple strategies on same symbol, overlaid equity curves |
 
@@ -100,16 +102,16 @@ The `npx skills add` command detects which agents you have installed and places 
 
 | Category | What's Covered |
 |----------|---------------|
-| **Data** | OpenAlgo (India), yfinance (US/Global), CCXT (Crypto), custom providers, `.env` + `python-dotenv`, CSV loading, resampling |
-| **Indicators** | OpenAlgo ta by default - 100+ indicators (EMA, SMA, RSI, MACD, BBands, ATR, ADX, STDDEV, MOM, Supertrend, Donchian, Ichimoku, HMA, KAMA, ALMA, ZLEMA, VWMA, oscillators, statistical, hybrid). TA-Lib only if explicitly requested |
+| **Data** | Local Parquet candle store (India), yfinance (US/Global), CCXT (Crypto), custom providers, `.env` + `python-dotenv`, CSV loading, resampling |
+| **Indicators** | TA-Lib by default (EMA, SMA, RSI, MACD, BBands, ATR, ADX, STDDEV, MOM ...); pandas-ta for the rest (Ichimoku, HMA, ALMA, VWMA ...); vectorbt indicators for parameter sweeps; `market_lib` signal helpers (exrem, crossover, flip, Donchian, Supertrend) |
 | **Signals** | `ta.exrem()` signal cleaning, `ta.crossover()`, `ta.crossunder()`, `ta.flip()` regime detection |
 | **Simulation** | `from_signals`, `from_orders`, `from_holding`, long/short/both directions |
 | **Sizing** | Percent, Value, TargetPercent, whole shares (`min_size=1`), futures lot sizes, fractional crypto |
 | **Costs** | **India**: 4-segment model (Delivery 0.111%, Intraday 0.0225%, Futures 0.018%, Options 0.098%). **US**: Per-share + per-contract model (Stocks ~0.01%, Options ~0.2%, Futures ~0.001%). **Crypto**: Maker/taker model (Spot 0.1%, Futures 0.02%/0.05%, funding rates). All customizable. |
 | **Futures** | SEBI revised lot sizes (Dec 2025): NIFTY=65, BANKNIFTY=30, FINNIFTY=60. US: E-mini/Micro contract specs |
 | **Risk** | Stop loss, take profit, trailing stop (`sl_trail`) |
-| **Optimization** | Loop-based (OpenAlgo ta / TA-Lib compliant) + broadcasting (vbt.MA exception for parameter sweeps) |
-| **Benchmarking** | India: NIFTY 50 via OpenAlgo. US: S&P 500 (`^GSPC`). Crypto: Bitcoin (`BTC-USD`). Strategy vs Benchmark table always produced |
+| **Optimization** | Loop-based (TA-Lib) + broadcasting (`vbt.MA` / `vbt.talib` for parameter sweeps) |
+| **Benchmarking** | India: NIFTYBEES (Nifty 50 ETF) from the local candle store. US: S&P 500 (`^GSPC`). Crypto: Bitcoin (`BTC-USD`). Strategy vs Benchmark table always produced |
 | **Reporting** | Plain-language backtest explanation for normal traders. OpenStatz HTML tearsheets with 30+ metrics, Monte Carlo simulations |
 | **Plotting** | Plotly dark theme, candlestick with `xaxis type="category"` (no weekend gaps), VectorBT 7-panel plot pack |
 | **Validation** | Walk-forward analysis (WFE ratio), robustness testing (Monte Carlo trade shuffle, noise injection, parameter sensitivity, entry/exit delay, cross-symbol validation) |
@@ -132,21 +134,18 @@ Install any supported AI coding agent. For example:
 Then install the skills:
 
 ```bash
-npx skills add marketcalls/vectorbt-backtesting-skills
+npx skills add mcsarathkumar/vectorbt-backtesting-skills
 ```
 
 ### 2. Data Source Setup
 
-**Indian Markets** — requires [OpenAlgo](https://github.com/marketcalls/openalgo):
+**Indian Markets** — reads the local [indian-market-data](../indian-market-data) Parquet store, no API or broker login needed:
 
-```bash
-git clone https://github.com/marketcalls/openalgo.git
-cd openalgo
-pip install -r requirements.txt
-python app.py
+```
+/Users/mcsarathkumar/Workspace/indian-market-data/data/candles/<EXCHANGE>/<SYMBOL>/<interval>/...parquet
 ```
 
-OpenAlgo runs locally at `http://127.0.0.1:5000`. You need a broker account connected via OpenAlgo and an API key from the dashboard. See [OpenAlgo documentation](https://docs.openalgo.in/).
+Override the location with `CANDLES_DIR` in `.env`. Coverage is uneven: most symbols have daily (`1day`) candles only; intraday (`1minute` ... `60minute`) exists for large caps. Check the symbol folder before backtesting. Scripts load data through `backtesting/market_lib.py` (`load_candles()`), which `/setup` copies from the vectorbt-expert skill.
 
 **US Markets** — no setup needed. Uses yfinance (public Yahoo Finance data).
 
@@ -161,13 +160,12 @@ python -m venv venv
 source venv/bin/activate   # Linux/Mac
 # venv\Scripts\activate    # Windows
 
-# Install Python packages (OpenAlgo ta is the default indicator library - no C library needed)
-pip install openalgo vectorbt plotly anywidget nbformat pandas numpy yfinance python-dotenv tqdm scipy numba ipywidgets openstatz ccxt
-
-# Optional: only if you want to be able to request TA-Lib explicitly in a backtest
+# TA-Lib needs its C library first
 brew install ta-lib         # macOS
 # sudo apt install libta-lib-dev  # Linux
-pip install ta-lib
+
+# Install Python packages
+pip install ta-lib pandas-ta vectorbt plotly anywidget nbformat pandas numpy pyarrow yfinance python-dotenv tqdm scipy numba ipywidgets openstatz ccxt
 ```
 
 ### 4. Configure API Keys
@@ -181,7 +179,7 @@ cp .env.sample .env
 
 ### `/setup` - Environment Setup
 
-Detects OS, creates venv, installs dependencies, creates folder structure, and collects API keys into `.env`.
+Detects OS, creates venv, installs dependencies, creates `backtesting/` with `market_lib.py`, and points `.env` at the candle store.
 
 ```
 /setup
@@ -196,7 +194,7 @@ Create a complete backtest script with market-specific fees, benchmark compariso
 # Indian Markets
 /backtest ema-crossover SBIN NSE D
 /backtest rsi RELIANCE NSE D
-/backtest supertrend NIFTY NFO 5m
+/backtest supertrend SBIN NSE 5m
 
 # US Markets
 /backtest ema-crossover AAPL
@@ -271,33 +269,25 @@ Realistic fee models for each market, auto-selected based on the asset. All fee 
 
 > **Using a different broker?** Simply override the fee constants in your backtest script. The rule files include detailed breakdowns (STT, exchange fees, regulatory fees, clearing fees) so you can recalculate for any broker.
 
-### OpenAlgo ta Indicators (Default)
+### Indicators (TA-Lib Default)
 
-All strategies use `openalgo.ta` for technical indicators by default - 100+ indicators across trend, momentum, volatility, volume, oscillators, statistical, and hybrid categories. VectorBT built-in indicators are never used.
-
-```python
-from openalgo import ta
-ema_fast = ta.ema(close, 10)
-st_line, st_direction = ta.supertrend(high, low, close, period=10, multiplier=3.0)
-entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-```
-
-Specialty indicators with no TA-Lib equivalent (Supertrend, Donchian, Ichimoku, HMA, KAMA, ALMA, ZLEMA, VWMA) plus signal utilities (`exrem`, `crossover`, `crossunder`, `flip`) always come from `openalgo.ta`.
-
-### TA-Lib (Opt-In Only)
-
-Only used when the user explicitly asks for "talib"/"TA-Lib" in their request:
+All strategies use TA-Lib for standard indicators. pandas-ta covers indicators TA-Lib lacks, and vectorbt indicators (`vbt.talib`, `vbt.MA`) are used for parameter sweeps or on request. `market_lib` provides the signal helpers.
 
 ```python
-import talib as tl
-ema_fast = pd.Series(tl.EMA(close.values, timeperiod=10), index=close.index)
+import talib
+from market_lib import load_candles, exrem, supertrend
+
+df = load_candles("SBIN", "NSE", "D")
+ema_fast = talib.EMA(df["close"], timeperiod=10)
+st_line, st_direction = supertrend(df["high"], df["low"], df["close"], period=10, multiplier=3.0)
+entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
 ```
 
 ### Market-Specific Benchmarks
 
 | Market | Default Benchmark | Source |
 |--------|-------------------|--------|
-| India | NIFTY 50 | OpenAlgo (`NSE_INDEX`) |
+| India | NIFTYBEES (Nifty 50 ETF) | Local candle store |
 | US | S&P 500 | yfinance (`^GSPC` or `SPY`) |
 | Crypto | Bitcoin | yfinance (`BTC-USD`) |
 
@@ -329,7 +319,7 @@ Every backtest explains results so normal traders can understand:
 
 ### Extensible Data Providers
 
-Built-in support for OpenAlgo, yfinance, and CCXT. Add custom providers (Alpaca, Twelve Data, etc.) following the pattern in `data-fetching.md`. All API keys stored in `.env` via `python-dotenv`.
+Built-in support for the local candle store, yfinance, and CCXT. Add custom providers (Alpaca, Twelve Data, etc.) following the pattern in `data-fetching.md`. All API keys stored in `.env` via `python-dotenv`.
 
 ### SEBI Revised Lot Sizes (Effective 31 Dec 2025)
 
@@ -390,7 +380,7 @@ backtesting/
 │               ├── simulation-modes.md
 │               ├── position-sizing.md
 │               ├── indicators-signals.md
-│               ├── openalgo-ta-helpers.md
+│               ├── ta-helpers.md
 │               ├── stop-loss-take-profit.md
 │               ├── parameter-optimization.md
 │               ├── performance-analysis.md
@@ -440,11 +430,11 @@ backtesting/
 
 | Rule File | Description |
 |-----------|-------------|
-| `data-fetching.md` | OpenAlgo (India), yfinance (US), CCXT (Crypto), custom providers, `.env` setup |
+| `data-fetching.md` | Local candle store (India), yfinance (US), CCXT (Crypto), custom providers, `.env` setup |
 | `simulation-modes.md` | from_signals, from_orders, from_holding, direction types |
 | `position-sizing.md` | Amount/Value/Percent/TargetPercent sizing, whole shares |
-| `indicators-signals.md` | OpenAlgo ta indicator reference (default), TA-Lib opt-in, signal generation |
-| `openalgo-ta-helpers.md` | Complete OpenAlgo ta catalog (100+ indicators): exrem, crossover, Supertrend, Donchian, Ichimoku, MAs |
+| `indicators-signals.md` | TA-Lib strategy snippets (default), pandas-ta extras, signal generation |
+| `ta-helpers.md` | TA-Lib / pandas-ta / vectorbt mapping; `market_lib` helpers: exrem, crossover, flip, Donchian, Supertrend |
 | `stop-loss-take-profit.md` | Fixed SL, TP, trailing stop configurations |
 | `parameter-optimization.md` | Broadcasting and loop-based optimization, heatmaps |
 | `performance-analysis.md` | Stats, metrics, benchmark comparison, CAGR calculation |
@@ -465,7 +455,7 @@ backtesting/
 
 | Source | Use Case | Tickers/Codes | API Key Required |
 |--------|----------|---------------|------------------|
-| OpenAlgo | Indian markets (primary) | NSE, BSE, NFO, BFO, CDS, MCX, NSE_INDEX, BSE_INDEX | Yes (`OPENALGO_API_KEY`) |
+| Local candles | Indian markets (primary) | `NSE/<SYMBOL>-EQ`, `BSE/<ticker>`, F&O in `fno_candles` | No (`CANDLES_DIR` optional) |
 | yfinance | US markets, global, crypto | `AAPL`, `SPY`, `^GSPC`, `^NSEI`, `BTC-USD`, `ETH-USD` | No |
 | CCXT | Crypto exchanges | `BTC/USDT`, `ETH/USDT` (higher resolution data) | Optional |
 | Custom | Any provider | User-defined | User-defined |
@@ -481,9 +471,8 @@ cp .env.sample .env
 The `.env` file supports:
 
 ```
-# Indian Markets (OpenAlgo)
-OPENALGO_API_KEY=your_openalgo_api_key_here
-OPENALGO_HOST=http://127.0.0.1:5000
+# Indian Markets - local Parquet candle store (default shown)
+CANDLES_DIR=/Users/mcsarathkumar/Workspace/indian-market-data/data/candles
 
 # Crypto Markets (CCXT) — Optional
 CRYPTO_API_KEY=

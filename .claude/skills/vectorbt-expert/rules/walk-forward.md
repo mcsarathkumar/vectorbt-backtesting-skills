@@ -23,7 +23,8 @@ If out-of-sample performance is consistently positive, the strategy has real edg
 The simplest form: split data into training (in-sample) and testing (out-of-sample):
 
 ```python
-from openalgo import ta
+import talib
+from market_lib import exrem
 
 # Split data: 70% train, 30% test
 split_idx = int(len(close) * 0.7)
@@ -38,13 +39,13 @@ for fast in range(5, 30):
     for slow in range(20, 60):
         if fast >= slow:
             continue
-        ema_f = ta.ema(close_train, fast)
-        ema_s = ta.ema(close_train, slow)
+        ema_f = talib.EMA(close_train, timeperiod=fast)
+        ema_s = talib.EMA(close_train, timeperiod=slow)
 
         buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
         sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-        entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-        exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+        entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+        exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
         pf = vbt.Portfolio.from_signals(
             close_train, entries, exits,
@@ -61,13 +62,13 @@ for fast in range(5, 30):
 print(f"Best in-sample params: {best_params}, Return: {best_return:.2%}")
 
 # Validate on test data with best parameters
-ema_f = ta.ema(close_test, best_params['fast'])
-ema_s = ta.ema(close_test, best_params['slow'])
+ema_f = talib.EMA(close_test, timeperiod=best_params['fast'])
+ema_s = talib.EMA(close_test, timeperiod=best_params['slow'])
 
 buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
 sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-entries_test = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-exits_test = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+entries_test = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+exits_test = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
 pf_test = vbt.Portfolio.from_signals(
     close_test, entries_test, exits_test,
@@ -85,7 +86,8 @@ print(f"Out-of-sample Sharpe: {pf_test.sharpe_ratio():.2f}")
 More rigorous: slide the optimization window forward in steps:
 
 ```python
-from openalgo import ta
+import talib
+from market_lib import exrem
 
 TRAIN_DAYS = 252 * 2    # 2 years training
 TEST_DAYS = 63           # 3 months testing (1 quarter)
@@ -106,13 +108,13 @@ while start + TRAIN_DAYS + TEST_DAYS <= len(close):
         for slow in range(20, 50):
             if fast >= slow:
                 continue
-            ema_f = ta.ema(train_slice, fast)
-            ema_s = ta.ema(train_slice, slow)
+            ema_f = talib.EMA(train_slice, timeperiod=fast)
+            ema_s = talib.EMA(train_slice, timeperiod=slow)
 
             buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
             sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-            entries = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-            exits = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+            entries = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+            exits = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
             pf = vbt.Portfolio.from_signals(
                 train_slice, entries, exits,
@@ -127,13 +129,13 @@ while start + TRAIN_DAYS + TEST_DAYS <= len(close):
                 best_fast, best_slow = fast, slow
 
     # Test on out-of-sample window
-    ema_f = ta.ema(test_slice, best_fast)
-    ema_s = ta.ema(test_slice, best_slow)
+    ema_f = talib.EMA(test_slice, timeperiod=best_fast)
+    ema_s = talib.EMA(test_slice, timeperiod=best_slow)
 
     buy_raw = (ema_f > ema_s) & (ema_f.shift(1) <= ema_s.shift(1))
     sell_raw = (ema_f < ema_s) & (ema_f.shift(1) >= ema_s.shift(1))
-    entries_t = ta.exrem(buy_raw.fillna(False), sell_raw.fillna(False))
-    exits_t = ta.exrem(sell_raw.fillna(False), buy_raw.fillna(False))
+    entries_t = exrem(buy_raw.fillna(False), sell_raw.fillna(False))
+    exits_t = exrem(sell_raw.fillna(False), buy_raw.fillna(False))
 
     pf_t = vbt.Portfolio.from_signals(
         test_slice, entries_t, exits_t,

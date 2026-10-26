@@ -1,12 +1,12 @@
 """
-Dual Momentum (ETF Rotation) Backtest - VectorBT + OpenAlgo
+Dual Momentum (ETF Rotation) Backtest - VectorBT + TA-Lib
 Strategy: Quarterly momentum rotation between NIFTYBEES and GOLDBEES.
           Buys previous quarter's outperformer for the next quarter.
 Fees: Indian delivery equity model (0.111% + Rs 20/order).
-Benchmark: NIFTY 50 Index via OpenAlgo (NSE_INDEX).
+Benchmark: NIFTYBEES (Nifty 50 ETF) from the local candle store.
 """
 
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,12 +15,16 @@ import pandas as pd
 import vectorbt as vbt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from dotenv import find_dotenv, load_dotenv
-from openalgo import api
+
+# market_lib.py lives in backtesting/ (copied by the setup skill)
+for _p in Path(__file__).resolve().parents:
+    if (_p / "market_lib.py").exists():
+        sys.path.insert(0, str(_p))
+        break
+from market_lib import load_candles
 
 # --- Config ---
 script_dir = Path(__file__).resolve().parent
-load_dotenv(find_dotenv(), override=False)
 
 SYMBOLS = ["NIFTYBEES", "GOLDBEES"]
 EXCHANGE = "NSE"
@@ -29,15 +33,10 @@ INIT_CASH = 10_00_000
 FEES = 0.00111              # Indian delivery equity
 FIXED_FEES = 20             # Rs 20 per order
 ALLOCATION = 0.75
-BENCHMARK_SYMBOL = "NIFTY"
-BENCHMARK_EXCHANGE = "NSE_INDEX"
+BENCHMARK_SYMBOL = "NIFTYBEES"
+BENCHMARK_EXCHANGE = "NSE"
 
 # --- Fetch Data ---
-client = api(
-    api_key=os.getenv("OPENALGO_API_KEY"),
-    host=os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000"),
-)
-
 end_date = datetime.now().date()
 start_date = "2018-01-01"
 
@@ -45,18 +44,7 @@ print(f"Fetching data for {SYMBOLS} ({EXCHANGE}) from {start_date} to {end_date}
 
 dfs = {}
 for sym in SYMBOLS:
-    df = client.history(
-        symbol=sym, exchange=EXCHANGE, interval=INTERVAL,
-        start_date=start_date, end_date=end_date.strftime("%Y-%m-%d"),
-    )
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.set_index("timestamp")
-    else:
-        df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    if df.index.tz is not None:
-        df.index = df.index.tz_convert(None)
+    df = load_candles(sym, EXCHANGE, INTERVAL, start=start_date, end=str(end_date))
     dfs[sym] = df
     print(f"  {sym}: {len(df)} bars from {df.index[0].date()} to {df.index[-1].date()}")
 
@@ -102,18 +90,7 @@ pf = vbt.Portfolio.from_orders(
 )
 
 # --- Benchmark ---
-df_nifty = client.history(
-    symbol=BENCHMARK_SYMBOL, exchange=BENCHMARK_EXCHANGE, interval=INTERVAL,
-    start_date=start_date, end_date=end_date.strftime("%Y-%m-%d"),
-)
-if "timestamp" in df_nifty.columns:
-    df_nifty["timestamp"] = pd.to_datetime(df_nifty["timestamp"])
-    df_nifty = df_nifty.set_index("timestamp")
-else:
-    df_nifty.index = pd.to_datetime(df_nifty.index)
-df_nifty = df_nifty.sort_index()
-if df_nifty.index.tz is not None:
-    df_nifty.index = df_nifty.index.tz_convert(None)
+df_nifty = load_candles(BENCHMARK_SYMBOL, BENCHMARK_EXCHANGE, INTERVAL, start=start_date, end=str(end_date))
 nifty_close = df_nifty["close"].reindex(alloc_daily.index).ffill().bfill()
 pf_bench = vbt.Portfolio.from_holding(nifty_close, init_cash=INIT_CASH, fees=FEES, freq="1D")
 
